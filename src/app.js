@@ -212,6 +212,10 @@ async function readScore(value) {
  */
 async function open(value, keep = null) {
   const token = ++state.loadToken;
+  if (outputStarting) {
+    await outputStarting.promise;
+    if (token !== state.loadToken) return;
+  }
   if (keep && keep.wasPlaying) api.pause();
   else api.stop();
   state.pendingPosition = keep;
@@ -342,11 +346,42 @@ el.file.addEventListener('change', async () => {
 
 // ---------------------------------------------------------------- 再生
 
-el.play.addEventListener('click', () => {
+// alphaTab 1.8.4：再生を始めてから音の出口（AudioWorklet）が動き出すまでの短い間に止めると、
+// 中で例外になり、無音の出口が1つつながったまま残る。出口が動き出すまで、止める操作を待つ。
+let outputStarting = null; // 再生を頼んでから、出口が動き出すまでの間だけ入っている
+
+function markOutputStarting() {
+  let resolve;
+  const entry = { promise: new Promise((r) => { resolve = r; }) };
+  entry.done = () => {
+    if (outputStarting === entry) outputStarting = null;
+    resolve();
+  };
+  outputStarting = entry;
+  setTimeout(entry.done, 1000); // 合図が来なくても、止める操作を待たせ続けない
+}
+
+// alphaTab の出口は、くり返しにした音源（loop）を start したときに動き出す
+const startSource = AudioBufferSourceNode.prototype.start;
+AudioBufferSourceNode.prototype.start = function start(...args) {
+  const result = startSource.apply(this, args);
+  if (this.loop && outputStarting) outputStarting.done();
+  return result;
+};
+
+function startPlaying() {
+  markOutputStarting();
+  api.play();
+}
+
+el.play.addEventListener('click', async () => {
   if (!state.score) return;
+  if (outputStarting) await outputStarting.promise;
+  else if (!isPlaying()) markOutputStarting();
   api.playPause();
 });
-el.stop.addEventListener('click', () => {
+el.stop.addEventListener('click', async () => {
+  if (outputStarting) await outputStarting.promise;
   api.stop();
   if (el.loop.checked) applyLoop();
 });
@@ -484,7 +519,7 @@ api.playerReady.on(() => {
     if (!range || (tick >= range.startTick && tick < range.endTick)) api.tickPosition = tick;
     const shown = Math.min(keep.barIndex, barCount() - 1) + 1;
     el.position.textContent = `小節 ${shown} / ${barCount()}`;
-    if (keep.wasPlaying) api.play();
+    if (keep.wasPlaying) startPlaying();
   }
 });
 api.playerStateChanged.on((e) => {

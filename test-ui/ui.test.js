@@ -271,6 +271,97 @@ test('聴き比べ：選んだファイルは、見本の入っている A→B �
   await page.close();
 });
 
+// ---------------------------------------------------------------- 長い楽譜・すばやい操作
+
+// 見本の小節をくり返して、長い楽譜を作る（実物でいちばん長いのは 131小節）
+function makeLong(xml, bars) {
+  const open = '<measure ';
+  const close = '</measure>';
+  const first = xml.indexOf(open);
+  const last = xml.lastIndexOf(close) + close.length;
+  const measures = xml.slice(first, last).split(close).filter((m) => m.includes(open)).map((m) => m.slice(m.indexOf(open)) + close);
+  const out = [];
+  for (let i = 0; i < bars; i++) {
+    const m = measures[i % measures.length];
+    const a = m.indexOf('number="') + 8;
+    out.push(m.slice(0, a) + (i + 1) + m.slice(m.indexOf('"', a)));
+  }
+  return xml.slice(0, first) + out.join('') + xml.slice(last);
+}
+
+test('131小節の長い楽譜：開けて、全部の小節が並び、横にはみ出さず、再生できる', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  const long = makeLong(readText('samples/aura_lea_jazz.musicxml'), 131);
+  await page.setInputFiles('#file', [{ name: '長い曲.musicxml', mimeType: 'application/xml', buffer: Buffer.from(long) }]);
+  await waitReadyFor(page, 131);
+  await page.waitForFunction(() => window.__app.api.renderer.boundsLookup?.staffSystems.flatMap((s) => s.bars).length >= 131);
+  assert.equal(await renderedBarCount(page), 131);
+  assert.ok((await overflow(page)) <= 0, '横にはみ出さない');
+  assert.match(await page.textContent('#status'), /131小節/);
+  // 最後の小節までスクロールしてタップし、そこから鳴らせる
+  await page.evaluate(() => {
+    const bar = window.__app.api.renderer.boundsLookup.staffSystems.flatMap((s) => s.bars).find((b) => b.index === 130).realBounds;
+    const top = document.querySelector('.at-surface').getBoundingClientRect().top + window.scrollY;
+    window.scrollTo(0, top + bar.y + bar.h / 2 - window.innerHeight / 2);
+  });
+  await tapBar(page, 130);
+  await page.waitForFunction(() => /小節 131 /.test(document.getElementById('position').textContent));
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  await page.click('#play');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('再生の直後に止めても、エラーにならず、音の出口が残らない', async () => {
+  const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // つながったままの音の出口（AudioWorkletNode）を数える
+  await page.addInitScript(() => {
+    window.__outputs = [];
+    const Original = window.AudioWorkletNode;
+    window.AudioWorkletNode = class extends Original {
+      constructor(...args) {
+        super(...args);
+        const record = { connected: false };
+        window.__outputs.push(record);
+        const connect = this.connect.bind(this);
+        const disconnect = this.disconnect.bind(this);
+        this.connect = (...a) => { record.connected = true; return connect(...a); };
+        this.disconnect = (...a) => { record.connected = false; return disconnect(...a); };
+      }
+    };
+  });
+  await page.goto(baseUrl);
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  const connected = () => page.evaluate(() => window.__outputs.filter((o) => o.connected).length);
+  const doubleTap = () => page.evaluate(() => { const b = document.getElementById('play'); b.click(); b.click(); });
+
+  // 最初の再生（音の出口の部品を読み込む間）と、2回目以降の両方で試す
+  for (let i = 0; i < 2; i++) {
+    await doubleTap();
+    await page.waitForFunction(() => window.__outputs.length > 0 && window.__outputs.every((o) => !o.connected));
+    await page.waitForTimeout(300);
+    assert.equal(await page.getAttribute('#play', 'data-state'), 'stopped');
+    assert.equal(await connected(), 0);
+    // その後も、ふつうに再生して止められる
+    await page.click('#play');
+    await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing' && window.__app.api.tickPosition > 0);
+    assert.equal(await connected(), 1);
+    await page.click('#play');
+    await page.waitForFunction(() => document.getElementById('play').dataset.state === 'stopped');
+    await page.waitForFunction(() => window.__outputs.every((o) => !o.connected));
+  }
+  // 再生の直後に「停止」を押しても同じ
+  await page.evaluate(() => { document.getElementById('play').click(); document.getElementById('stop').click(); });
+  await page.waitForTimeout(1500);
+  assert.equal(await connected(), 0);
+  assert.equal(await page.getAttribute('#play', 'data-state'), 'stopped');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 // ---------------------------------------------------------------- オフライン
 
 test('オフライン：一度開けば、電波が無くても開けて再生できる', async () => {
