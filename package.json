@@ -1,0 +1,13 @@
+{
+  "name": "gakufu-viewer",
+  "private": true,
+  "type": "module",
+  "description": "MusicXML（ギターの TAB つき）を iPad の Safari で見て聴く静的な Web アプリ",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "serve": "http-server -c-1 -p 8080 ."
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "0.9.12"
+  }
+}
