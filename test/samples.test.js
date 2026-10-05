@@ -80,3 +80,20 @@ test('aura_lea_jazz：小節の途中の <offset> つきのコード（D・Db7�
   const raw = chordNames(loadRaw(text)).map((s) => s.split(':')[2]);
   assert.ok(!raw.includes('Db7'));
 });
+
+test('jingle_bells_pop：コード名と重なる2つ目の声部の休符（2・7小節の頭など）を見えなくする。音は変わらない', async () => {
+  const text = readText('samples/jingle_bells_pop.musicxml');
+  const { score, applied, settings } = await load(text);
+  assert.equal(applied.hiddenRests, 10);
+  const bars = score.tracks[0].staves[0].bars;
+  for (const i of [1, 6]) {
+    const first = bars[i].voices[1].beats[0];
+    assert.equal(first.notes.length, 0);
+    assert.equal(first.isEmpty, true, `${i + 1}小節の頭の休符`);
+    assert.ok(bars[i].voices[0].beats[0].chordId !== null, `${i + 1}小節の頭にコード名がある`);
+  }
+  // 4拍目の休符（コード名が無い所）は見えたまま
+  const rest = bars[6].voices[1].beats.find((b) => b.playbackStart === 2880);
+  assert.equal(rest.isEmpty, false);
+  assert.equal(countNoteOns(score, settings) * 2, countNoteOns(loadRaw(text)));
+});

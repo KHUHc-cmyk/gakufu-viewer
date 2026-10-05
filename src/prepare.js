@@ -432,6 +432,41 @@ function moveSectionsToText(score) {
   return moved;
 }
 
+/**
+ * 2つ目の声部の休符が、コード名と重なるものだけを見えなくする（長さはそのまま。音にも関わらない）。
+ * alphaTab 1.8.4 は、2つ目の声部の休符がほかの声部の音とぶつかると、譜表の上へ押し上げる。
+ * その位置はコード名の行の高さを決めた後で決まるため、同じ拍にコード名や文字があると重なる。
+ */
+function hideRestsUnderChordNames(score) {
+  let hidden = 0;
+  for (const track of score.tracks) {
+    for (const staff of track.staves) {
+      for (const bar of staff.bars) {
+        const voice = bar.voices[1];
+        if (!voice) continue;
+        const noteStarts = new Set();
+        const labelStarts = new Set();
+        for (const v of bar.voices) {
+          for (const b of v.beats) {
+            if (v.index !== 1 && b.notes.length > 0) noteStarts.add(b.playbackStart);
+            if (b.chordId !== null || b.text) labelStarts.add(b.playbackStart);
+          }
+        }
+        // 小節の頭には、テンポの印も出る
+        if (bar.masterBar.tempoAutomations.some((a) => a.isVisible)) labelStarts.add(0);
+        for (const b of voice.beats) {
+          if (b.isEmpty || b.notes.length > 0) continue;
+          if (noteStarts.has(b.playbackStart) && labelStarts.has(b.playbackStart)) {
+            b.isEmpty = true;
+            hidden++;
+          }
+        }
+      }
+    }
+  }
+  return hidden;
+}
+
 const HARMONIC_NATURAL = 1; // alphaTab.model.HarmonicType.Natural
 const HARMONIC_ARTIFICIAL = 2; // alphaTab.model.HarmonicType.Artificial
 
@@ -502,10 +537,11 @@ function matchNotes(track, xmlNotes) {
  *  - alphaTab 1.8.4 は、音を拍に入れた後で弦の番号を読むため、弦ごとの引き当てが空になる。これを作り直す
  *  - hammer-on / pull-off・ハーモニクスを付け直し、alphaTab の仕上げ（score.finish）をもう一度走らせる
  *  - 練習番号をコード名と重ならない所へ移す
+ *  - コード名と重なる、2つ目の声部の休符を見えなくする
  * 返り値：付け直した数などの記録
  */
 export function applyToScore(score, report, settings) {
-  const result = { hammerPulls: 0, hammerPullsMissed: 0, harmonics: 0, harmonicsMissed: 0, sections: 0 };
+  const result = { hammerPulls: 0, hammerPullsMissed: 0, harmonics: 0, harmonicsMissed: 0, sections: 0, hiddenRests: 0 };
   report.parts.forEach((info, i) => {
     const track = score.tracks[i];
     if (!track) return;
@@ -560,6 +596,7 @@ export function applyToScore(score, report, settings) {
   });
 
   result.sections = moveSectionsToText(score);
+  result.hiddenRests = hideRestsUnderChordNames(score);
   if (settings) score.finish(settings);
 
   for (const info of report.parts) {

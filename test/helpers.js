@@ -99,14 +99,14 @@ function crc32(buf) {
   return ~c >>> 0;
 }
 
-/** files: [{ name, text, store? }] → zip のバイト列 */
+/** files: [{ name, text または data, store? }] → zip のバイト列 */
 export function makeZip(files) {
   const locals = [];
   const centrals = [];
   let offset = 0;
   for (const f of files) {
     const name = Buffer.from(f.name);
-    const raw = Buffer.from(f.text);
+    const raw = f.data ? Buffer.from(f.data) : Buffer.from(f.text);
     const data = f.store ? raw : zlib.deflateRawSync(raw);
     const method = f.store ? 0 : 8;
     const crc = crc32(raw);
@@ -153,4 +153,13 @@ export function makeMxl(xmlText, { name = 'score.musicxml', container = true, st
   }
   files.push({ name, text: xmlText, store });
   return makeZip(files);
+}
+
+/** zip の1つの中身を取り出す（テスト用。deflate と格納だけ） */
+export function readZipEntry(bytes, entry) {
+  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const p = entry.offset;
+  const start = p + 30 + b.readUInt16LE(p + 26) + b.readUInt16LE(p + 28);
+  const data = b.subarray(start, start + entry.compressedSize);
+  return entry.method === 8 ? zlib.inflateRawSync(data) : data;
 }
