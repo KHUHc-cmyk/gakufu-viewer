@@ -190,8 +190,8 @@ async function open(value) {
     api.renderScore(result.score, result.score.tracks.map((t) => t.index));
     const notes = [];
     if (result.mode === 'raw') notes.push('整えずにそのまま表示');
-    if (result.applied && result.applied.hammerPullsMissed > 0) {
-      notes.push(`付け直せなかった hammer-on / pull-off ${result.applied.hammerPullsMissed}個`);
+    if (result.applied && result.applied.hammerPullsMissed + result.applied.harmonicsMissed > 0) {
+      notes.push(`付け直せなかった奏法 ${result.applied.hammerPullsMissed + result.applied.harmonicsMissed}個`);
     }
     state.scoreStatus = `${state.title}（${barCount()}小節）${notes.length ? `・${notes.join('・')}` : ''}`;
     setStatus(state.soundFontLoaded ? state.scoreStatus : '音源を読み込んでいます…');

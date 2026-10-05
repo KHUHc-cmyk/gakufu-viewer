@@ -5,7 +5,7 @@
 //  (1) 2段目が TAB の段（clef の sign が TAB）のときだけ、そこに重ねて書かれた音を外し、残った1段を「五線＋TAB」で描く
 //  (2) hammer-on / pull-off を読み取り、読み込み後のモデルに付け直す
 //  (3) コード名を自前で組み立てる（分数コードのベース音・小節の途中の <offset> つきのコードを落とさない）
-//  ハーモニクス（<harmonic>）は付け直さず、ふつうの音（フレットどおりの高さ）として鳴らす（本人の判断・2026-10-05）
+//  (4) ハーモニクスを読み取り、読み込み後のモデルに付け直す（alphaTab 1.8.4 は <harmonic> を読まない）
 
 const ELEMENT_NODE = 1;
 const TICKS_PER_QUARTER = 960; // alphaTab の4分音符の長さ
@@ -269,11 +269,12 @@ function technicalOf(note) {
 /**
  * 1つのパートを小節ごとに歩き、音の位置を記録しながら、
  * コード名の書き換え・<offset> つきのコードの移動をする。
- * 返り値：{ notes, hammerPairs, chords }
+ * 返り値：{ notes, hammerPairs, harmonics, chords }
  */
 function walkPart(doc, part) {
   const notes = []; // { measure, staff, tick, pitch, string, fret }
   const hammerPairs = []; // { origin, destination, kind }（notes の番号）
+  const harmonics = []; // { note, kind }
   const chords = []; // { measure, tick, name }
   const pending = new Map(); // number → { index, kind }
   let divisions = 1;
@@ -348,6 +349,9 @@ function walkPart(doc, part) {
                   pending.delete(key);
                   hammerPairs.push({ origin: p.index, destination: index, kind: p.kind });
                 }
+              } else if (t.nodeName === 'harmonic') {
+                const kind = firstChild(t, 'artificial') ? 'artificial' : 'natural';
+                harmonics.push({ note: index, kind });
               }
             }
           }
@@ -364,7 +368,7 @@ function walkPart(doc, part) {
       else measure.appendChild(harmony);
     }
   }
-  return { notes, hammerPairs, chords };
+  return { notes, hammerPairs, harmonics, chords };
 }
 
 // ---------------------------------------------------------------- 入口
@@ -428,6 +432,23 @@ function moveSectionsToText(score) {
   return moved;
 }
 
+const HARMONIC_NATURAL = 1; // alphaTab.model.HarmonicType.Natural
+const HARMONIC_ARTIFICIAL = 2; // alphaTab.model.HarmonicType.Artificial
+
+/** alphaTab の ModelUtils.deltaFretToHarmonicValue と同じ表（外へ出ていないので写す） */
+function harmonicValueForFret(fret) {
+  switch (fret) {
+    case 2: return 2.4;
+    case 3: return 3.2;
+    case 4: case 5: case 7: case 9: case 12: case 16: case 17: case 19: case 24: return fret;
+    case 8: return 8.2;
+    case 10: return 9.6;
+    case 14: case 15: return 14.7;
+    case 21: case 22: return 21.7;
+    default: return 12;
+  }
+}
+
 function modelNotesOf(track) {
   const out = [];
   track.staves.forEach((staff, staffIndex) => {
@@ -479,12 +500,12 @@ function matchNotes(track, xmlNotes) {
  * 読み込み後のモデルを整える。
  *  - TAB の段を外したパートは、残った1段を「五線＋TAB」で描く
  *  - alphaTab 1.8.4 は、音を拍に入れた後で弦の番号を読むため、弦ごとの引き当てが空になる。これを作り直す
- *  - hammer-on / pull-off を付け直し、alphaTab の仕上げ（score.finish）をもう一度走らせる
+ *  - hammer-on / pull-off・ハーモニクスを付け直し、alphaTab の仕上げ（score.finish）をもう一度走らせる
  *  - 練習番号をコード名と重ならない所へ移す
  * 返り値：付け直した数などの記録
  */
 export function applyToScore(score, report, settings) {
-  const result = { hammerPulls: 0, hammerPullsMissed: 0, sections: 0 };
+  const result = { hammerPulls: 0, hammerPullsMissed: 0, harmonics: 0, harmonicsMissed: 0, sections: 0 };
   report.parts.forEach((info, i) => {
     const track = score.tracks[i];
     if (!track) return;
@@ -520,6 +541,21 @@ export function applyToScore(score, report, settings) {
       } else {
         result.hammerPullsMissed++;
       }
+    }
+    for (const h of info.harmonics ?? []) {
+      const note = mapped[h.note];
+      if (!note || !note.isStringed) {
+        result.harmonicsMissed++;
+        continue;
+      }
+      if (h.kind === 'artificial') {
+        note.harmonicType = HARMONIC_ARTIFICIAL;
+        note.harmonicValue = 12;
+      } else {
+        note.harmonicType = HARMONIC_NATURAL;
+        note.harmonicValue = harmonicValueForFret(note.fret);
+      }
+      result.harmonics++;
     }
   });
 

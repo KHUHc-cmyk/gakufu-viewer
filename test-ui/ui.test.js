@@ -94,7 +94,8 @@ test('小節をタップすると、その小節の頭へ移る', async () => {
   await tapBar(page, 4);
   await page.waitForFunction(() => {
     const { api, state } = window.__app;
-    return api.tickPosition === api.tickCache.getMasterBarStart(state.score.masterBars[4]);
+    // 再生側（ワーカー）から返る位置は、時間と tick の換算で 1〜2 tick ずれることがある
+    return Math.abs(api.tickPosition - api.tickCache.getMasterBarStart(state.score.masterBars[4])) <= 5;
   });
   assert.match(await page.textContent('#position'), /小節 5 [/] 18/);
   await page.close();
@@ -142,6 +143,11 @@ test('ファイルを選ぶ：.musicxml と .mxl を一度に開ける', async (
   ]);
   await page.waitForFunction(() => /4小節/.test(document.getElementById('status').textContent));
   await page.waitForSelector('#play:not([disabled])');
+  // 描画はワーカーで後から終わるので、新しい楽譜の小節が並ぶまで待つ
+  await page.waitForFunction(() => {
+    const lookup = window.__app.api.renderer.boundsLookup;
+    return lookup && new Set(lookup.staffSystems.flatMap((s) => s.bars.map((b) => b.index))).size === 4;
+  });
   assert.equal(await renderedBarCount(page), 4);
   const options = await page.$$eval('#file-group option', (os) => os.map((o) => o.textContent));
   assert.deepEqual(options, ['音階.musicxml', '音階.mxl']);

@@ -24,12 +24,18 @@ test('ギター試験用：分数コードのベース音・degree・小節の�
   ]);
 });
 
-test('ギター試験用：ハーモニクスは、ふつうの音（フレットどおりの高さ）として鳴る', async () => {
-  const { score } = await load(guitar);
-  const notes = score.tracks[0].staves[0].bars[2].voices[0].beats.flatMap((b) => b.notes);
-  assert.deepEqual(notes.map((n) => n.harmonicType), [0, 0, 0, 0]);
-  // 1弦12フレット=E5(76)・2弦12フレット=B4(71)・3弦7フレット=D4(62)・4弦2フレット=E3(52)
-  assert.deepEqual(notes.map((n) => n.realValue), [76, 71, 62, 52]);
+test('ギター試験用：ハーモニクスが付き、鳴る高さがハーモニクスの高さになる', async () => {
+  const { score, applied } = await load(guitar);
+  assert.equal(applied.harmonics, 4);
+  assert.equal(applied.harmonicsMissed, 0);
+  const bar = score.tracks[0].staves[0].bars[2];
+  const notes = bar.voices[0].beats.flatMap((b) => b.notes);
+  assert.deepEqual(notes.map((n) => n.harmonicType), [1, 1, 1, 2]); // 1=ナチュラル 2=人工
+  // 1弦12フレット=E5(76)・2弦12フレット=B4(71)・3弦7フレット=D5(74)・4弦2フレットの人工ハーモニクス=E4(64)
+  assert.deepEqual(notes.map((n) => n.realValue), [76, 71, 74, 64]);
+  // alphaTab だけで読むと、ハーモニクスが付かない
+  const rawNotes = loadRaw(guitar).tracks[0].staves[0].bars[2].voices[0].beats.flatMap((b) => b.notes);
+  assert.ok(rawNotes.every((n) => n.harmonicType === 0));
 });
 
 test('ギター試験用：3連符が読める', async () => {
