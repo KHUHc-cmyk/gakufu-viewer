@@ -5,9 +5,11 @@
   "description": "MusicXML（ギターの TAB つき）を iPad の Safari で見て聴く静的な Web アプリ",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "serve": "http-server -c-1 -p 8080 ."
+    "test:ui": "node --test --test-concurrency=1 test-ui/*.test.js",
+    "serve": "node test-ui/serve.js"
   },
   "devDependencies": {
-    "@xmldom/xmldom": "0.9.12"
+    "@xmldom/xmldom": "0.9.12",
+    "playwright": "1.56.1"
   }
 }

@@ -24,7 +24,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Node のテスト（整える層＋読み込み）
+        run: npm test
+      - name: 画面のテストの準備（Chromium）
+        run: npx playwright install --with-deps chromium
+      - name: 画面のテスト
+        run: npm run test:ui
       - name: 公開するファイルをまとめる
         run: |
           mkdir -p _site
