@@ -20,6 +20,9 @@ const el = {
   countin: $('countin'),
   position: $('position'),
   score: $('score'),
+  offline: $('offline'),
+  slotButtons: [...document.querySelectorAll('.slot-btn')],
+  slotSelects: [...document.querySelectorAll('.slot select')],
 };
 
 const PlayerState = alphaTab.synth.PlayerState;
@@ -91,6 +94,10 @@ const state = {
   soundFontLoaded: false,
   scoreStatus: '',
   loadToken: 0,
+  cache: new Map(), // id → 読み込んだ結果（聴き比べで行き来するとき、読み直さない）
+  slots: { A: 'sample:samples/aura_lea_jazz.musicxml', B: 'sample:samples/jingle_bells_pop.musicxml', C: null },
+  activeSlot: 'A',
+  pendingPosition: null, // 切り替えの後に戻す位置 { barIndex, fraction, wasPlaying }
 };
 
 window.__app = { api, state }; // 画面のテスト用
@@ -169,24 +176,61 @@ function nameFor(value) {
   return state.files.get(value)?.name ?? '';
 }
 
-async function open(value) {
+/** いまの位置を「何小節目の、どのあたりか」で覚える */
+function capturePosition() {
+  if (!state.score || !api.tickCache) return null;
+  const tick = api.tickPosition;
+  const found = api.tickCache.findBeat(new Set(state.score.tracks.map((t) => t.index)), tick);
+  if (!found) return { barIndex: 0, fraction: 0, wasPlaying: isPlaying() };
+  const mb = found.masterBar;
+  const length = Math.max(1, mb.end - mb.start);
+  return {
+    barIndex: mb.masterBar.index,
+    fraction: Math.min(Math.max((tick - mb.start) / length, 0), 0.999),
+    wasPlaying: isPlaying(),
+  };
+}
+
+/** 覚えた位置を、いまの楽譜の tick にする（小節が足りなければ最後の小節） */
+function tickForPosition(pos) {
+  const bars = state.score.masterBars;
+  const mb = bars[Math.min(pos.barIndex, bars.length - 1)];
+  const start = api.tickCache.getMasterBarStart(mb);
+  return Math.round(start + pos.fraction * mb.calculateDuration());
+}
+
+async function readScore(value) {
+  if (state.cache.has(value)) return state.cache.get(value);
+  const bytes = await bytesFor(value);
+  const result = await loadScore(alphaTab, bytes, api.settings);
+  state.cache.set(value, result);
+  return result;
+}
+
+/**
+ * 楽譜を開く。keep を渡すと、くり返しの範囲を残し、読み込んだ後にその位置へ移る（再生していたら続ける）。
+ */
+async function open(value, keep = null) {
   const token = ++state.loadToken;
-  api.stop();
+  if (keep && keep.wasPlaying) api.pause();
+  else api.stop();
+  state.pendingPosition = keep;
   state.score = null;
   state.scoreStatus = '';
   state.playerReady = false;
   refreshButtons();
   setStatus('楽譜を読んでいます…');
   try {
-    const bytes = await bytesFor(value);
-    const result = await loadScore(alphaTab, bytes, api.settings);
+    const result = await readScore(value);
     if (token !== state.loadToken) return;
     state.score = result.score;
     state.title = result.score.title || nameFor(value);
     el.loopFrom.max = el.loopTo.max = String(barCount());
-    el.loopFrom.value = '1';
-    el.loopTo.value = String(Math.min(4, barCount()));
-    el.position.textContent = '';
+    if (!keep) {
+      el.loopFrom.value = '1';
+      el.loopTo.value = String(Math.min(4, barCount()));
+      el.position.textContent = '';
+    }
     api.renderScore(result.score, result.score.tracks.map((t) => t.index));
     const notes = [];
     if (result.mode === 'raw') notes.push('整えずにそのまま表示');
@@ -202,12 +246,81 @@ async function open(value) {
   }
 }
 
-el.scores.addEventListener('change', () => open(el.scores.value));
+el.scores.addEventListener('change', () => {
+  setActiveSlot(slotOf(el.scores.value));
+  open(el.scores.value);
+});
+
+// ---------------------------------------------------------------- 聴き比べ（A／B／C）
+
+const SLOT_NAMES = ['A', 'B', 'C'];
+
+function slotOf(value) {
+  if (state.activeSlot && state.slots[state.activeSlot] === value) return state.activeSlot;
+  return SLOT_NAMES.find((n) => state.slots[n] === value) ?? null;
+}
+
+function setActiveSlot(name) {
+  state.activeSlot = name;
+  for (const b of el.slotButtons) b.setAttribute('aria-pressed', String(b.dataset.slot === name));
+}
+
+/** A／B／C の選び欄に、開ける楽譜を並べ直す */
+function refreshSlotOptions() {
+  for (const select of el.slotSelects) {
+    const name = select.dataset.slot;
+    select.textContent = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '（なし）';
+    select.appendChild(none);
+    for (const opt of el.scores.querySelectorAll('option')) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.textContent;
+      select.appendChild(o);
+    }
+    select.value = state.slots[name] ?? '';
+  }
+}
+
+function switchToSlot(name) {
+  const value = state.slots[name];
+  if (!value) {
+    setStatus(`${name} に楽譜を選んでください`);
+    return;
+  }
+  setActiveSlot(name);
+  if (value === el.scores.value && state.score) return;
+  const keep = capturePosition();
+  el.scores.value = value;
+  open(value, keep);
+}
+
+for (const b of el.slotButtons) b.addEventListener('click', () => switchToSlot(b.dataset.slot));
+for (const select of el.slotSelects) {
+  select.addEventListener('change', () => {
+    const name = select.dataset.slot;
+    state.slots[name] = select.value || null;
+    if (state.activeSlot === name && select.value) {
+      state.activeSlot = null; // いまの楽譜と違えば切り替える
+      switchToSlot(name);
+    }
+  });
+}
+
+/** 新しく開いたファイルを、空いている（または見本の入っている）A→B→C に入れる */
+function assignFilesToSlots(ids) {
+  const free = SLOT_NAMES.filter((n) => !state.slots[n] || state.slots[n].startsWith('sample:'));
+  ids.slice(0, free.length).forEach((id, i) => {
+    state.slots[free[i]] = id;
+  });
+}
 
 el.file.addEventListener('change', async () => {
   const files = [...el.file.files];
   el.file.value = ''; // 同じファイルをもう一度選べるように
-  let first = null;
+  const added = [];
   for (const f of files) {
     const id = `file:${state.nextFileId++}`;
     state.files.set(id, { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
@@ -215,12 +328,15 @@ el.file.addEventListener('change', async () => {
     opt.value = id;
     opt.textContent = f.name;
     el.fileGroup.appendChild(opt);
-    first ??= id;
+    added.push(id);
   }
-  if (first) {
+  if (added.length) {
     el.fileGroup.hidden = false;
-    el.scores.value = first;
-    open(first);
+    assignFilesToSlots(added);
+    refreshSlotOptions();
+    el.scores.value = added[0];
+    setActiveSlot(slotOf(added[0]));
+    open(added[0]);
   }
 });
 
@@ -360,6 +476,16 @@ api.playerReady.on(() => {
   if (state.scoreStatus) setStatus(state.scoreStatus);
   refreshButtons();
   if (el.loop.checked) applyLoop();
+  const keep = state.pendingPosition;
+  state.pendingPosition = null;
+  if (keep && state.score && api.tickCache) {
+    const tick = tickForPosition(keep);
+    const range = api.playbackRange;
+    if (!range || (tick >= range.startTick && tick < range.endTick)) api.tickPosition = tick;
+    const shown = Math.min(keep.barIndex, barCount() - 1) + 1;
+    el.position.textContent = `小節 ${shown} / ${barCount()}`;
+    if (keep.wasPlaying) api.play();
+  }
 });
 api.playerStateChanged.on((e) => {
   refreshButtons();
@@ -376,5 +502,20 @@ api.error.on((e) => {
 
 darkQuery.addEventListener('change', applyTheme);
 
+// ---------------------------------------------------------------- オフライン
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then(
+    () => navigator.serviceWorker.ready.then(() => {
+      el.offline.textContent = 'この端末に保存済み（電波が無くても開けます）';
+    }),
+    () => {
+      // 保存できない環境（プライベートブラウズなど）では、ふつうに使う
+    },
+  );
+}
+
 updateScrollOffset();
+refreshSlotOptions();
+setActiveSlot('A');
 open(el.scores.value);

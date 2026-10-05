@@ -165,3 +165,134 @@ test('読めないファイルを選ぶと、日本語で知らせる', async ()
   await page.waitForFunction(() => /読めませんでした/.test(document.getElementById('status').textContent));
   await page.close();
 });
+
+// ---------------------------------------------------------------- 聴き比べ
+
+function currentTick(page) {
+  return page.evaluate(() => window.__app.api.tickPosition);
+}
+
+function barStart(page, index) {
+  return page.evaluate((i) => window.__app.api.tickCache.getMasterBarStart(window.__app.state.score.masterBars[i]), index);
+}
+
+async function waitReadyFor(page, bars) {
+  await page.waitForFunction((n) => {
+    const { state } = window.__app;
+    return state.playerReady && state.score && state.score.masterBars.length === n && state.pendingPosition === null;
+  }, bars);
+}
+
+test('聴き比べ：はじめは A＝Aura Lea・B＝Jingle Bells で、A が選ばれている', async () => {
+  const { page } = await openPage(820, 1180);
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="A"]', 'aria-pressed'), 'true');
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="B"]', 'aria-pressed'), 'false');
+  assert.equal(await page.inputValue('select[data-slot="A"]'), 'sample:samples/aura_lea_jazz.musicxml');
+  assert.equal(await page.inputValue('select[data-slot="B"]'), 'sample:samples/jingle_bells_pop.musicxml');
+  assert.equal(await page.inputValue('select[data-slot="C"]'), '');
+  assert.ok((await overflow(page)) <= 0);
+  await page.close();
+});
+
+test('聴き比べ：止まっているとき、B に切り替えても同じ小節の頭にいる', async () => {
+  const { page } = await openPage(1180, 820);
+  await tapBar(page, 4);
+  await page.waitForFunction(() => /小節 5/.test(document.getElementById('position').textContent));
+  await page.click('.slot-btn[data-slot="B"]');
+  await waitReadyFor(page, 16);
+  assert.match(await page.textContent('#status'), /Jingle/);
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="B"]', 'aria-pressed'), 'true');
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="A"]', 'aria-pressed'), 'false');
+  const start = await barStart(page, 4);
+  await page.waitForFunction((s) => Math.abs(window.__app.api.tickPosition - s) <= 5, start);
+  assert.match(await page.textContent('#position'), /小節 5 [/] 16/);
+  assert.equal(await page.inputValue('#scores'), 'sample:samples/jingle_bells_pop.musicxml');
+  await page.close();
+});
+
+test('聴き比べ：再生中に切り替えると、同じあたりの小節から再生が続く', async () => {
+  const { page } = await openPage(1180, 820);
+  await tapBar(page, 2);
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  await page.waitForTimeout(800);
+  const before = await page.evaluate(() => {
+    const { api, state } = window.__app;
+    return api.tickCache.findBeat(new Set([0]), api.tickPosition).masterBar.masterBar.index;
+  });
+  await page.click('.slot-btn[data-slot="B"]');
+  await waitReadyFor(page, 16);
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  const after = await page.evaluate(() => {
+    const { api } = window.__app;
+    return api.tickCache.findBeat(new Set([0]), api.tickPosition).masterBar.masterBar.index;
+  });
+  assert.ok(after >= before && after <= before + 1, `切り替え前 ${before + 1} 小節・後 ${after + 1} 小節`);
+  await page.click('#play');
+  await page.close();
+});
+
+test('聴き比べ：くり返しの範囲は、切り替えても残る', async () => {
+  const { page } = await openPage(1180, 820);
+  await page.fill('#loop-from', '3');
+  await page.fill('#loop-to', '6');
+  await page.check('#loop');
+  await page.click('.slot-btn[data-slot="B"]');
+  await waitReadyFor(page, 16);
+  assert.equal(await page.inputValue('#loop-from'), '3');
+  assert.equal(await page.inputValue('#loop-to'), '6');
+  const ok = await page.evaluate(() => {
+    const { api, state } = window.__app;
+    return api.isLooping && api.playbackRange.startTick === api.tickCache.getMasterBarStart(state.score.masterBars[2]);
+  });
+  assert.equal(ok, true);
+  await page.click('.slot-btn[data-slot="A"]');
+  await waitReadyFor(page, 18);
+  assert.match(await page.textContent('#status'), /Aura/);
+  await page.close();
+});
+
+test('聴き比べ：選んだファイルは、見本の入っている A→B に入る', async () => {
+  const { page } = await openPage(820, 1180);
+  const guitar = readText('test/fixtures/scale_guitar_tab_extras.musicxml');
+  await page.setInputFiles('#file', [
+    { name: '一つ目.musicxml', mimeType: 'application/xml', buffer: Buffer.from(guitar) },
+    { name: '二つ目.mxl', mimeType: 'application/octet-stream', buffer: Buffer.from(makeMxl(guitar)) },
+  ]);
+  await waitReadyFor(page, 4);
+  const labels = await page.$$eval('.slot select', (ss) => ss.map((s) => s.selectedOptions[0].textContent));
+  assert.deepEqual(labels, ['一つ目.musicxml', '二つ目.mxl', '（なし）']);
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="A"]', 'aria-pressed'), 'true');
+  await page.click('.slot-btn[data-slot="C"]');
+  assert.match(await page.textContent('#status'), /C に楽譜を選んでください/);
+  await page.selectOption('select[data-slot="C"]', { label: '見本：Jingle Bells（ポップ）' });
+  await page.click('.slot-btn[data-slot="C"]');
+  await waitReadyFor(page, 16);
+  await page.close();
+});
+
+// ---------------------------------------------------------------- オフライン
+
+test('オフライン：一度開けば、電波が無くても開けて再生できる', async () => {
+  const context = await browser.newContext({ viewport: { width: 820, height: 1180 } });
+  const page = await context.newPage();
+  await page.goto(baseUrl);
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null || document.getElementById('offline').textContent !== '');
+  await page.waitForFunction(() => document.getElementById('offline').textContent.includes('保存済み'));
+
+  await context.setOffline(true);
+  await page.reload();
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  assert.match(await page.textContent('#status'), /18小節/);
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  await page.click('#play');
+  // 見本の B も保存されている
+  await page.click('.slot-btn[data-slot="B"]');
+  await waitReadyFor(page, 16);
+  // ?out=sp 付きでも開ける
+  await page.goto(`${baseUrl}?out=sp`);
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  await context.close();
+});

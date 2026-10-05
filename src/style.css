@@ -69,7 +69,13 @@ select { padding: 0 12px; max-width: 100%; min-width: 0; flex: 1 1 220px; }
 }
 #status { color: var(--muted); font-size: 14px; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 .position { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; margin-left: auto; }
-.hint { margin: 8px 16px 0; color: var(--muted); font-size: 13px; }
+.hint { margin: 8px 16px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+#offline:not(:empty)::before { content: "・"; }
+.compare-label { font-size: 15px; white-space: nowrap; }
+.slot { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 180px; min-width: 0; }
+.slot select { flex: 1 1 auto; min-width: 0; padding: 0 8px; font-size: 15px; }
+.slot-btn { min-width: 44px; padding: 0 12px; font-weight: 600; }
+.slot-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 #score-wrap { padding: 0 4px 60px; max-width: 100%; overflow-x: hidden; }
 #score { width: 100%; touch-action: manipulation; }
 .at-cursor-bar { background: var(--cursor-bar); }
