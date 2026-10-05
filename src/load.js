@@ -20,18 +20,19 @@ function looksLikeMusicXml(text) {
  *  mode … 'prepared'（整える層を通した）／'raw'（そのまま alphaTab に渡した）
  */
 export async function loadScore(alphaTab, input, settings, env = globalThis) {
-  let bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const original = input instanceof Uint8Array ? input : new Uint8Array(input);
+  let bytes = original;
   let note = null;
-  if (isZip(bytes)) {
+  if (isZip(original)) {
+    bytes = null;
     try {
-      const inner = await extractMusicXmlFromZip(bytes);
-      if (inner) bytes = inner;
+      bytes = await extractMusicXmlFromZip(original);
     } catch (e) {
       // 戻せないときは、alphaTab に zip のまま読ませる（alphaTab も .mxl を読める）
       note = e.message;
     }
   }
-  if (!isZip(bytes)) {
+  if (bytes) {
     const text = decodeText(bytes);
     if (looksLikeMusicXml(text)) {
       const { xml, report } = prepareMusicXml(text, env);
@@ -40,6 +41,7 @@ export async function loadScore(alphaTab, input, settings, env = globalThis) {
       return { score, mode: 'prepared', report, applied, note };
     }
   }
-  const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, settings);
+  // MusicXML でないもの（Guitar Pro など。zip の Guitar Pro 7 は、中に別の .xml があっても元のまま）は alphaTab に任せる
+  const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(original, settings);
   return { score, mode: 'raw', report: null, applied: null, note };
 }
