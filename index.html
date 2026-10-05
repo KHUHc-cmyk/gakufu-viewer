@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>楽譜ビューア（音の確認）</title>
+<link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+<header class="bar">
+  <h1>楽譜ビューア</h1>
+  <button id="play" type="button" disabled>準備中…</button>
+  <span id="status" role="status">楽譜と音源を読み込んでいます…</span>
+</header>
+<p class="note">音の確認のための仮のページです。「再生」を押して音が出るか試してください。音が出ないときは、iPad の消音（コントロールセンターのベル）と音量を確かめてから、<a id="alt" href="?out=sp">別の鳴らし方で試すページ</a>も開いてください。</p>
+<main id="score-wrap"><div id="score"></div></main>
+<script type="module" src="src/sound-check.js"></script>
+</body>
+</html>
