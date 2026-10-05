@@ -4,17 +4,46 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>楽譜ビューア（音の確認）</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>楽譜ビューア</title>
 <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-<header class="bar">
-  <h1>楽譜ビューア</h1>
-  <button id="play" type="button" disabled>準備中…</button>
-  <span id="status" role="status">楽譜と音源を読み込んでいます…</span>
+<header id="toolbar" class="bar">
+  <div class="row">
+    <label class="btn file-btn">
+      ファイルを選ぶ
+      <input id="file" type="file" multiple>
+    </label>
+    <select id="scores" aria-label="楽譜">
+      <optgroup label="見本" id="sample-group">
+        <option value="sample:samples/aura_lea_jazz.musicxml">見本：Aura Lea（ジャズ）</option>
+        <option value="sample:samples/jingle_bells_pop.musicxml">見本：Jingle Bells（ポップ）</option>
+      </optgroup>
+      <optgroup label="開いたファイル" id="file-group" hidden></optgroup>
+    </select>
+    <span id="status" role="status">準備しています…</span>
+  </div>
+  <div class="row">
+    <button id="play" type="button" class="btn primary" disabled data-state="stopped">再生</button>
+    <button id="stop" type="button" class="btn" disabled>停止</button>
+    <label class="group tempo">
+      テンポ
+      <input id="tempo" type="range" min="50" max="120" step="5" value="100">
+      <output id="tempo-out" for="tempo">100%</output>
+    </label>
+  </div>
+  <div class="row">
+    <label class="group toggle"><input id="loop" type="checkbox"> くり返し</label>
+    <label class="group num">小節 <input id="loop-from" type="number" min="1" value="1" inputmode="numeric"></label>
+    <label class="group num">〜 <input id="loop-to" type="number" min="1" value="4" inputmode="numeric"></label>
+    <label class="group toggle"><input id="metronome" type="checkbox"> メトロノーム</label>
+    <label class="group toggle"><input id="countin" type="checkbox"> カウントイン</label>
+    <span id="position" class="position"></span>
+  </div>
 </header>
-<p class="note">音の確認のための仮のページです。「再生」を押して音が出るか試してください。音が出ないときは、iPad の消音（コントロールセンターのベル）と音量を確かめてから、<a id="alt" href="?out=sp">別の鳴らし方で試すページ</a>も開いてください。</p>
+<p id="hint" class="hint">小節をタップすると、その小節の頭から再生します。</p>
 <main id="score-wrap"><div id="score"></div></main>
-<script type="module" src="src/sound-check.js"></script>
+<script type="module" src="src/app.js"></script>
 </body>
 </html>
