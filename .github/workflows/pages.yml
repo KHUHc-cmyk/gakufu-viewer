@@ -33,7 +33,10 @@ jobs:
       - name: 公開するファイルをまとめる
         run: |
           mkdir -p _site
-          cp -r index.html src vendor samples _site/
+          cp -r index.html sw.js src vendor samples _site/
+          # オフライン用の保存の版を、コミットごとに変える（新しい版が出たら入れ替わる）
+          sed -i "s/build-local/${GITHUB_SHA}/" _site/sw.js
+          grep -q "${GITHUB_SHA}" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

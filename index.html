@@ -41,8 +41,14 @@
     <label class="group toggle"><input id="countin" type="checkbox"> カウントイン</label>
     <span id="position" class="position"></span>
   </div>
+  <div class="row compare" id="compare">
+    <span class="compare-label">聴き比べ</span>
+    <span class="slot"><button type="button" class="btn slot-btn" data-slot="A" aria-pressed="false">A</button><select data-slot="A" aria-label="A の楽譜"></select></span>
+    <span class="slot"><button type="button" class="btn slot-btn" data-slot="B" aria-pressed="false">B</button><select data-slot="B" aria-label="B の楽譜"></select></span>
+    <span class="slot"><button type="button" class="btn slot-btn" data-slot="C" aria-pressed="false">C</button><select data-slot="C" aria-label="C の楽譜"></select></span>
+  </div>
 </header>
-<p id="hint" class="hint">小節をタップすると、その小節の頭から再生します。</p>
+<p id="hint" class="hint">小節をタップすると、その小節の頭から再生します。A／B／C を押すと、同じ小節の位置のまま楽譜を切り替えます。<span id="offline"></span></p>
 <main id="score-wrap"><div id="score"></div></main>
 <script type="module" src="src/app.js"></script>
 </body>
