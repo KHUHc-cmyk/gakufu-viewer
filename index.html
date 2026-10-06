@@ -22,24 +22,34 @@
       </optgroup>
       <optgroup label="開いたファイル" id="file-group" hidden></optgroup>
     </select>
+    <label class="group zoom">大きさ
+      <select id="zoom">
+        <option value="0.8">小</option>
+        <option value="1" selected>中</option>
+        <option value="1.25">大</option>
+      </select>
+    </label>
     <span id="status" role="status">準備しています…</span>
   </div>
-  <div class="row">
+  <div class="row main">
     <button id="play" type="button" class="btn primary" disabled data-state="stopped">再生</button>
     <button id="stop" type="button" class="btn" disabled>停止</button>
-    <label class="group tempo">
-      テンポ
-      <input id="tempo" type="range" min="50" max="120" step="5" value="100">
-      <output id="tempo-out" for="tempo">100%</output>
-    </label>
+    <div class="group tempo">
+      <label for="tempo">テンポ</label>
+      <input id="tempo" type="range" min="50" max="200" step="5" value="100">
+      <button id="tempo-out" type="button" class="btn sub tempo-out" aria-label="テンポを100%に戻す">100%</button>
+    </div>
+    <span id="position" class="position"></span>
+    <button id="fold" type="button" class="btn sub fold" aria-expanded="true" aria-controls="toolbar">たたむ</button>
   </div>
   <div class="row">
     <label class="group toggle"><input id="loop" type="checkbox"> くり返し</label>
     <label class="group num">小節 <input id="loop-from" type="number" min="1" value="1" inputmode="numeric"></label>
+    <button id="loop-from-here" type="button" class="btn sub">ここから</button>
     <label class="group num">〜 <input id="loop-to" type="number" min="1" value="4" inputmode="numeric"></label>
+    <button id="loop-to-here" type="button" class="btn sub">ここまで</button>
     <label class="group toggle"><input id="metronome" type="checkbox"> メトロノーム</label>
     <label class="group toggle"><input id="countin" type="checkbox"> カウントイン</label>
-    <span id="position" class="position"></span>
   </div>
   <div class="row compare" id="compare">
     <span class="compare-label">聴き比べ</span>
@@ -48,7 +58,7 @@
     <span class="slot"><button type="button" class="btn slot-btn" data-slot="C" aria-pressed="false">C</button><select data-slot="C" aria-label="C の楽譜"></select></span>
   </div>
 </header>
-<p id="hint" class="hint">小節をタップすると、その小節の頭から再生します。A／B／C を押すと、同じ小節の位置のまま楽譜を切り替えます。<span id="offline"></span></p>
+<p id="hint" class="hint">小節をタップすると、その小節の頭から再生します。「ここから」「ここまで」は、いまの小節をくり返しの範囲に入れます。テンポの数字を押すと 100% に戻ります。A／B／C を押すと、同じ小節の位置のまま楽譜を切り替えます。<span id="offline"></span></p>
 <main id="score-wrap"><div id="score"></div></main>
 <script type="module" src="src/app.js"></script>
 </body>

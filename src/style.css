@@ -62,13 +62,17 @@ select { padding: 0 12px; max-width: 100%; min-width: 0; flex: 1 1 220px; }
 .toggle input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
 .tempo { flex: 1 1 260px; }
 .tempo input { flex: 1 1 auto; min-width: 120px; accent-color: var(--accent); }
-.tempo output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.btn.sub { padding: 0 12px; font-size: 15px; }
+.tempo-out { min-width: 4.4em; font-variant-numeric: tabular-nums; }
+.zoom select { flex: 0 0 auto; min-height: 40px; font-size: 15px; }
+.fold { margin-left: auto; }
+.bar.folded .row:not(.main) { display: none; }
 .num input {
   font: inherit; width: 4.2em; min-height: 40px; padding: 0 8px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
 }
 #status { color: var(--muted); font-size: 14px; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
-.position { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.position { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { margin: 8px 16px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 #offline:not(:empty)::before { content: "・"; }
 .compare-label { font-size: 15px; white-space: nowrap; }

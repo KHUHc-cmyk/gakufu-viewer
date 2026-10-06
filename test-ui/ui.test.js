@@ -134,6 +134,138 @@ test('テンポ・くり返し・メトロノーム・カウントイン', async
   await page.close();
 });
 
+test('テンポは 200% まで上げられ、数字を押すと 100% に戻る', async () => {
+  const { page, errors } = await openPage(1180, 820);
+  await page.fill('#tempo', '200');
+  await page.dispatchEvent('#tempo', 'input');
+  assert.equal(await page.textContent('#tempo-out'), '200%');
+  assert.equal(await page.evaluate(() => window.__app.api.playbackSpeed), 2);
+  // 2倍の速さで、実際に先へ進む
+  await page.click('#play');
+  await page.waitForFunction(() => window.__app.state.currentBar >= 2, null, { timeout: 15000 });
+  await page.click('#stop');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'stopped');
+  assert.match(await page.textContent('#position'), /小節 1 [/] 18/);
+  await page.click('#tempo-out');
+  assert.equal(await page.textContent('#tempo-out'), '100%');
+  assert.equal(await page.inputValue('#tempo'), '100');
+  assert.equal(await page.evaluate(() => window.__app.api.playbackSpeed), 1);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('「ここから」「ここまで」で、いまの小節がくり返しの範囲に入る', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  await tapBar(page, 4);
+  await page.click('#loop-from-here');
+  // はじめの範囲は 1〜4。5 から始めると逆さになるので、終わりも 5 にそろう
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['5', '5']);
+  await tapBar(page, 7);
+  await page.click('#loop-to-here');
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['5', '8']);
+  await page.check('#loop');
+  const range = await page.evaluate(() => {
+    const { api, state } = window.__app;
+    const mb = state.score.masterBars;
+    return {
+      start: api.playbackRange.startTick,
+      end: api.playbackRange.endTick,
+      expectedStart: api.tickCache.getMasterBarStart(mb[4]),
+      expectedEnd: api.tickCache.getMasterBarStart(mb[7]) + mb[7].calculateDuration(),
+    };
+  });
+  assert.equal(range.start, range.expectedStart);
+  assert.equal(range.end, range.expectedEnd);
+  // 範囲より前の小節で「ここまで」を押すと、始まりも同じ小節にそろう
+  await page.uncheck('#loop');
+  await tapBar(page, 1);
+  await page.click('#loop-to-here');
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['2', '2']);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('楽譜の大きさを変えても、小節の数が合い、横にはみ出さない', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  const height = () => page.evaluate(() => document.querySelector('.at-surface').getBoundingClientRect().height);
+  const before = await height();
+  for (const [value, bigger] of [['1.25', true], ['0.8', false]]) {
+    await page.selectOption('#zoom', value);
+    await page.waitForFunction(
+      ([h, up]) => {
+        const now = document.querySelector('.at-surface').getBoundingClientRect().height;
+        return up ? now > h * 1.05 : now < h * 0.95;
+      },
+      [before, bigger],
+    );
+    assert.equal(await renderedBarCount(page), 18);
+    assert.ok((await overflow(page)) <= 0, `大きさ ${value} で横にはみ出さない`);
+  }
+  // 大きさを変えた後も、小節のタップが合う
+  await tapBar(page, 6);
+  assert.match(await page.textContent('#position'), /小節 7 [/] 18/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('操作の欄をたたむと、再生の行だけが残り、ひらくと戻る', async () => {
+  const { page } = await openPage(820, 1180);
+  const barHeight = () => page.evaluate(() => document.getElementById('toolbar').offsetHeight);
+  const open = await barHeight();
+  await page.click('#fold');
+  assert.equal(await page.textContent('#fold'), 'ひらく');
+  assert.ok((await barHeight()) < open / 2, 'たたむと半分より低くなる');
+  assert.equal(await page.isVisible('#play'), true);
+  assert.equal(await page.isVisible('#tempo'), true);
+  assert.equal(await page.isVisible('#loop'), false);
+  assert.equal(await page.isVisible('#scores'), false);
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  await page.click('#stop');
+  await page.click('#fold');
+  assert.equal(await page.textContent('#fold'), 'たたむ');
+  assert.equal(await barHeight(), open);
+  assert.equal(await page.isVisible('#loop'), true);
+  await page.close();
+});
+
+test('読めないファイルは、たたんでいても知らせが見える', async () => {
+  const { page } = await openPage(820, 1180);
+  await page.setInputFiles('#file', { name: 'こわれた.musicxml', mimeType: 'application/xml', buffer: Buffer.from('<score-partwise>') });
+  await page.waitForFunction(() => document.getElementById('status').textContent.includes('読めませんでした'));
+  await page.click('#fold');
+  assert.equal(await page.isVisible('#status'), false);
+  await page.evaluate(() => window.__app.api.error.trigger(new Error('試験')));
+  assert.equal(await page.isVisible('#status'), true);
+  assert.match(await page.textContent('#status'), /うまく動きませんでした/);
+  await page.close();
+});
+
+test('テンポ・メトロノーム・カウントイン・大きさは、開き直しても残る', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  await page.fill('#tempo', '150');
+  await page.dispatchEvent('#tempo', 'input');
+  await page.dispatchEvent('#tempo', 'change');
+  await page.check('#metronome');
+  await page.selectOption('#zoom', '1.25');
+  await page.reload();
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  assert.equal(await page.inputValue('#tempo'), '150');
+  assert.equal(await page.textContent('#tempo-out'), '150%');
+  assert.equal(await page.isChecked('#metronome'), true);
+  assert.equal(await page.isChecked('#countin'), false);
+  assert.equal(await page.inputValue('#zoom'), '1.25');
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const { api } = window.__app;
+      return [api.playbackSpeed, api.metronomeVolume, api.countInVolume, api.settings.display.scale];
+    }),
+    [1.5, 1, 0, 1.25],
+  );
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('ファイルを選ぶ：.musicxml と .mxl を一度に開ける', async () => {
   const { page, errors } = await openPage(820, 1180);
   const guitar = readText('test/fixtures/scale_guitar_tab_extras.musicxml');

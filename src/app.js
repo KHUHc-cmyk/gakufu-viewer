@@ -16,8 +16,12 @@ const el = {
   loop: $('loop'),
   loopFrom: $('loop-from'),
   loopTo: $('loop-to'),
+  loopFromHere: $('loop-from-here'),
+  loopToHere: $('loop-to-here'),
   metronome: $('metronome'),
   countin: $('countin'),
+  zoom: $('zoom'),
+  fold: $('fold'),
   position: $('position'),
   score: $('score'),
   offline: $('offline'),
@@ -33,6 +37,41 @@ try {
   if (navigator.audioSession) navigator.audioSession.type = 'playback';
 } catch {
   // 対応していない端末では何もしない
+}
+
+// ---------------------------------------------------------------- 設定を覚える（この端末の中だけ）
+
+const SETTINGS_KEY = 'gakufu-viewer:settings';
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch {
+    return {}; // プライベートブラウズなどでは覚えない
+  }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      tempo: Number(el.tempo.value),
+      metronome: el.metronome.checked,
+      countin: el.countin.checked,
+      zoom: el.zoom.value,
+    }));
+  } catch {
+    // 覚えられなくても、そのまま使える
+  }
+}
+
+{
+  const saved = loadSettings();
+  if (Number.isFinite(saved.tempo)) el.tempo.value = String(saved.tempo);
+  el.tempoOut.textContent = `${el.tempo.value}%`;
+  el.metronome.checked = saved.metronome === true;
+  el.countin.checked = saved.countin === true;
+  if ([...el.zoom.options].some((o) => o.value === saved.zoom)) el.zoom.value = saved.zoom;
 }
 
 // ---------------------------------------------------------------- 明暗
@@ -69,6 +108,7 @@ const api = new alphaTab.AlphaTabApi(el.score, {
   },
   display: {
     layoutMode: alphaTab.LayoutMode.Page,
+    scale: Number(el.zoom.value),
     resources: themeColors(),
   },
   player: {
@@ -98,6 +138,7 @@ const state = {
   slots: { A: 'sample:samples/aura_lea_jazz.musicxml', B: 'sample:samples/jingle_bells_pop.musicxml', C: null },
   activeSlot: 'A',
   pendingPosition: null, // 切り替えの後に戻す位置 { barIndex, fraction, wasPlaying }
+  currentBar: 0, // いまいる小節（0 始まり）。「ここから」「ここまで」で使う
 };
 
 window.__app = { api, state }; // 画面のテスト用
@@ -123,6 +164,26 @@ function refreshButtons() {
 
 function barCount() {
   return state.score ? state.score.masterBars.length : 0;
+}
+
+function showPosition(barIndex) {
+  state.currentBar = barIndex;
+  el.position.textContent = `小節 ${barIndex + 1} / ${barCount()}`;
+}
+
+/** 操作の欄をたたんで、楽譜を広く見せる（再生・停止・テンポの行だけ残す） */
+function setFolded(folded) {
+  el.toolbar.classList.toggle('folded', folded);
+  el.fold.textContent = folded ? 'ひらく' : 'たたむ';
+  el.fold.setAttribute('aria-expanded', String(!folded));
+}
+
+el.fold.addEventListener('click', () => setFolded(!el.toolbar.classList.contains('folded')));
+
+/** うまくいかなかった知らせは、たたんでいても見えるようにする */
+function showError(text) {
+  setFolded(false);
+  setStatus(text);
 }
 
 function updateScrollOffset() {
@@ -233,6 +294,7 @@ async function open(value, keep = null) {
     if (!keep) {
       el.loopFrom.value = '1';
       el.loopTo.value = String(Math.min(4, barCount()));
+      state.currentBar = 0;
       el.position.textContent = '';
     }
     api.renderScore(result.score, result.score.tracks.map((t) => t.index));
@@ -246,7 +308,7 @@ async function open(value, keep = null) {
   } catch (e) {
     if (token !== state.loadToken) return;
     console.error(e);
-    setStatus(`この楽譜は読めませんでした：${e && e.message ? e.message : e}`);
+    showError(`この楽譜は読めませんでした：${e && e.message ? e.message : e}`);
   }
 }
 
@@ -384,19 +446,52 @@ el.stop.addEventListener('click', async () => {
   if (outputStarting) await outputStarting.promise;
   api.stop();
   if (el.loop.checked) applyLoop();
+  showStartPosition();
 });
 
-el.tempo.addEventListener('input', () => {
+/** 止めた後・最後まで鳴り終えた後の位置（くり返しの範囲の頭か、曲の頭） */
+function showStartPosition() {
+  if (!state.score) return;
+  showPosition(el.loop.checked ? clampBar(el.loopFrom) : 0);
+}
+
+function applyTempo() {
   const v = Number(el.tempo.value);
   el.tempoOut.textContent = `${v}%`;
   api.playbackSpeed = v / 100;
+}
+
+/** テンポ・メトロノーム・カウントインを、画面の欄のとおりに再生側へ伝える */
+function applyPlayerSettings() {
+  applyTempo();
+  api.metronomeVolume = el.metronome.checked ? 1 : 0;
+  api.countInVolume = el.countin.checked ? 1 : 0;
+}
+
+el.tempo.addEventListener('input', applyTempo);
+el.tempo.addEventListener('change', saveSettings);
+el.tempoOut.addEventListener('click', () => {
+  el.tempo.value = '100';
+  applyTempo();
+  saveSettings();
 });
 
 el.metronome.addEventListener('change', () => {
   api.metronomeVolume = el.metronome.checked ? 1 : 0;
+  saveSettings();
 });
 el.countin.addEventListener('change', () => {
   api.countInVolume = el.countin.checked ? 1 : 0;
+  saveSettings();
+});
+
+// ---------------------------------------------------------------- 楽譜の大きさ
+
+el.zoom.addEventListener('change', () => {
+  api.settings.display.scale = Number(el.zoom.value);
+  api.updateSettings();
+  if (state.score) api.render();
+  saveSettings();
 });
 
 // ---------------------------------------------------------------- くり返し
@@ -461,6 +556,21 @@ el.loop.addEventListener('change', applyLoop);
 el.loopFrom.addEventListener('change', applyLoop);
 el.loopTo.addEventListener('change', applyLoop);
 
+/** いまいる小節を、くり返しの範囲の端に入れる */
+function setLoopEdge(input) {
+  if (!state.score) return;
+  const bar = String(state.currentBar + 1);
+  input.value = bar;
+  // 範囲が逆さになるときは、もう片方も同じ小節にそろえる
+  if (Number(el.loopFrom.value) > Number(el.loopTo.value)) {
+    (input === el.loopFrom ? el.loopTo : el.loopFrom).value = bar;
+  }
+  applyLoop();
+}
+
+el.loopFromHere.addEventListener('click', () => setLoopEdge(el.loopFrom));
+el.loopToHere.addEventListener('click', () => setLoopEdge(el.loopTo));
+
 // ---------------------------------------------------------------- 小節タップで頭出し
 
 function barAt(x, y) {
@@ -491,7 +601,7 @@ el.score.addEventListener('click', (e) => {
   const index = barAt(e.clientX - rect.left, e.clientY - rect.top);
   if (index < 0) return;
   api.tickPosition = api.tickCache.getMasterBarStart(state.score.masterBars[index]);
-  el.position.textContent = `小節 ${index + 1} / ${barCount()}`;
+  showPosition(index);
 });
 
 // ---------------------------------------------------------------- alphaTab の知らせ
@@ -510,6 +620,7 @@ api.playerReady.on(() => {
   state.soundFontLoaded = true;
   if (state.scoreStatus) setStatus(state.scoreStatus);
   refreshButtons();
+  applyPlayerSettings();
   if (el.loop.checked) applyLoop();
   const keep = state.pendingPosition;
   state.pendingPosition = null;
@@ -517,8 +628,7 @@ api.playerReady.on(() => {
     const tick = tickForPosition(keep);
     const range = api.playbackRange;
     if (!range || (tick >= range.startTick && tick < range.endTick)) api.tickPosition = tick;
-    const shown = Math.min(keep.barIndex, barCount() - 1) + 1;
-    el.position.textContent = `小節 ${shown} / ${barCount()}`;
+    showPosition(Math.min(keep.barIndex, barCount() - 1));
     if (keep.wasPlaying) startPlaying();
   }
 });
@@ -528,11 +638,12 @@ api.playerStateChanged.on((e) => {
   else releaseWakeLock();
 });
 api.playedBeatChanged.on((beat) => {
-  el.position.textContent = `小節 ${beat.voice.bar.index + 1} / ${barCount()}`;
+  showPosition(beat.voice.bar.index);
 });
+api.playerFinished.on(showStartPosition);
 api.error.on((e) => {
   console.error(e);
-  setStatus(`うまく動きませんでした：${e && e.message ? e.message : e}`);
+  showError(`うまく動きませんでした：${e && e.message ? e.message : e}`);
 });
 
 darkQuery.addEventListener('change', applyTheme);
