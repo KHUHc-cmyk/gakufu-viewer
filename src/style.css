@@ -63,6 +63,8 @@ select { padding: 0 12px; max-width: 100%; min-width: 0; flex: 1 1 220px; }
 .tempo { flex: 1 1 260px; }
 .tempo input { flex: 1 1 auto; min-width: 120px; accent-color: var(--accent); }
 .btn.sub { padding: 0 12px; font-size: 15px; }
+.btn[hidden] { display: none; }
+a.btn { text-decoration: none; white-space: nowrap; }
 .tempo-out { min-width: 4.4em; font-variant-numeric: tabular-nums; }
 .zoom select { flex: 0 0 auto; min-height: 40px; font-size: 15px; }
 .fold { margin-left: auto; }
@@ -71,7 +73,7 @@ select { padding: 0 12px; max-width: 100%; min-width: 0; flex: 1 1 220px; }
   font: inherit; width: 4.2em; min-height: 40px; padding: 0 8px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
 }
-#status { color: var(--muted); font-size: 14px; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+#status { color: var(--muted); font-size: 14px; flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
 .position { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { margin: 8px 16px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 #offline:not(:empty)::before { content: "・"; }

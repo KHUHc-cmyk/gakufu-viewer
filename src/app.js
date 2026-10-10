@@ -1,11 +1,13 @@
 // 楽譜ビューアの画面。楽譜はブラウザの中で読むだけで、外へは送らない。
 import * as alphaTab from '../vendor/alphatab/alphaTab.mjs';
 import { loadScore } from './load.js';
+import { readIncoming, safeBackUrl } from './incoming.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   toolbar: $('toolbar'),
   file: $('file'),
+  back: $('back'),
   scores: $('scores'),
   fileGroup: $('file-group'),
   status: $('status'),
@@ -43,6 +45,15 @@ try {
 
 const SETTINGS_KEY = 'gakufu-viewer:settings';
 
+let backUrl = null; // コード進行練習補助へ戻る URL（受け取ったときに覚える。リポジトリには書かない）
+
+function setBackUrl(url) {
+  backUrl = url;
+  el.back.hidden = !url;
+  if (url) el.back.href = url;
+  else el.back.removeAttribute('href');
+}
+
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
@@ -59,6 +70,7 @@ function saveSettings() {
       metronome: el.metronome.checked,
       countin: el.countin.checked,
       zoom: el.zoom.value,
+      backUrl,
     }));
   } catch {
     // 覚えられなくても、そのまま使える
@@ -72,6 +84,7 @@ function saveSettings() {
   el.metronome.checked = saved.metronome === true;
   el.countin.checked = saved.countin === true;
   if ([...el.zoom.options].some((o) => o.value === saved.zoom)) el.zoom.value = saved.zoom;
+  setBackUrl(safeBackUrl(saved.backUrl));
 }
 
 // ---------------------------------------------------------------- 明暗
@@ -134,6 +147,7 @@ const state = {
   soundFontLoaded: false,
   scoreStatus: '',
   loadToken: 0,
+  notice: '', // 次に開いた楽譜の名前の前に、1回だけ出す知らせ
   cache: new Map(), // id → 読み込んだ結果（聴き比べで行き来するとき、読み直さない）
   slots: { A: 'sample:samples/aura_lea_jazz.musicxml', B: 'sample:samples/jingle_bells_pop.musicxml', C: null },
   activeSlot: 'A',
@@ -303,7 +317,8 @@ async function open(value, keep = null) {
     if (result.applied && result.applied.hammerPullsMissed + result.applied.harmonicsMissed > 0) {
       notes.push(`付け直せなかった奏法 ${result.applied.hammerPullsMissed + result.applied.harmonicsMissed}個`);
     }
-    state.scoreStatus = `${state.title}（${barCount()}小節）${notes.length ? `・${notes.join('・')}` : ''}`;
+    state.scoreStatus = `${state.notice}${state.title}（${barCount()}小節）${notes.length ? `・${notes.join('・')}` : ''}`;
+    state.notice = '';
     setStatus(state.soundFontLoaded ? state.scoreStatus : '音源を読み込んでいます…');
   } catch (e) {
     if (token !== state.loadToken) return;
@@ -383,13 +398,12 @@ function assignFilesToSlots(ids) {
   });
 }
 
-el.file.addEventListener('change', async () => {
-  const files = [...el.file.files];
-  el.file.value = ''; // 同じファイルをもう一度選べるように
+/** 楽譜（[{ name, bytes }]）を「開いたファイル」に足し、1本目を開く */
+function addScores(list) {
   const added = [];
-  for (const f of files) {
+  for (const f of list) {
     const id = `file:${state.nextFileId++}`;
-    state.files.set(id, { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+    state.files.set(id, { name: f.name, bytes: f.bytes });
     const opt = document.createElement('option');
     opt.value = id;
     opt.textContent = f.name;
@@ -403,6 +417,43 @@ el.file.addEventListener('change', async () => {
     el.scores.value = added[0];
     setActiveSlot(slotOf(added[0]));
     open(added[0]);
+  }
+}
+
+el.file.addEventListener('change', async () => {
+  const files = [...el.file.files];
+  el.file.value = ''; // 同じファイルをもう一度選べるように
+  const list = [];
+  for (const f of files) list.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+  addScores(list);
+});
+
+// ---------------------------------------------------------------- ほかのツールから受け取る（URL の # より後ろ）
+
+/** 受け取った楽譜があれば開く。開いたら true */
+async function openIncoming() {
+  if (location.hash.length < 2) return false;
+  try {
+    const incoming = await readIncoming(location.hash);
+    if (incoming.back) {
+      setBackUrl(incoming.back);
+      saveSettings();
+    }
+    if (!incoming.scores.length) return false;
+    addScores(incoming.scores);
+    return true;
+  } catch (e) {
+    console.error(e);
+    state.notice = `受け取った楽譜を読めませんでした（${e && e.message ? e.message : e}）／`;
+    return false;
+  }
+}
+
+// 開いたままの画面に、次の楽譜が渡されたとき
+window.addEventListener('hashchange', async () => {
+  if (!(await openIncoming()) && state.notice) {
+    showError(state.notice.slice(0, -1));
+    state.notice = '';
   }
 });
 
@@ -664,4 +715,6 @@ if ('serviceWorker' in navigator) {
 updateScrollOffset();
 refreshSlotOptions();
 setActiveSlot('A');
-open(el.scores.value);
+openIncoming().then((opened) => {
+  if (!opened) open(el.scores.value);
+});

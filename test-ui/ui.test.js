@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startServer } from './server.js';
-import { root, makeMxl, readText } from '../test/helpers.js';
+import { root, makeMxl, readText, incomingHash } from '../test/helpers.js';
 
 let server;
 let baseUrl;
@@ -19,7 +19,7 @@ after(async () => {
   server?.close();
 });
 
-async function openPage(width, height, colorScheme = 'light') {
+async function openPage(width, height, colorScheme = 'light', hash = '') {
   const page = await browser.newPage({ viewport: { width, height }, colorScheme });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -29,7 +29,7 @@ async function openPage(width, height, colorScheme = 'light') {
     const u = new URL(r.url());
     if (!['127.0.0.1', 'localhost'].includes(u.hostname) && !['blob:', 'data:'].includes(u.protocol)) outside.push(r.url());
   });
-  await page.goto(baseUrl);
+  await page.goto(baseUrl + hash);
   await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
   await page.waitForFunction(() => window.__app.api.renderer.boundsLookup?.staffSystems.length > 0);
   return { page, errors, outside };
@@ -263,6 +263,82 @@ test('テンポ・メトロノーム・カウントイン・大きさは、開�
     [1.5, 1, 0, 1.25],
   );
   assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// ---------------------------------------------------------------- ほかのツールから受け取る
+
+const BACK = 'https://script.google.com/macros/s/TEST_ID/exec';
+
+test('受け取り：URL で渡された楽譜が開き、A に入り、戻るボタンが出る', async () => {
+  const jingle = readText('samples/jingle_bells_pop.musicxml');
+  const hash = await incomingHash([{ name: '8ビート_丸サ進行_C.musicxml', text: jingle }], BACK);
+  const { page, errors, outside } = await openPage(820, 1180, 'light', hash);
+  await waitReadyFor(page, 16);
+  assert.match(await page.textContent('#status'), /16小節/);
+  assert.equal(await page.textContent('#scores option:checked'), '8ビート_丸サ進行_C.musicxml');
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="A"]', 'aria-pressed'), 'true');
+  assert.equal(await page.inputValue('select[data-slot="A"]'), 'file:1');
+  assert.equal(await page.isVisible('#back'), true);
+  assert.equal(await page.getAttribute('#back', 'href'), BACK);
+  assert.ok((await overflow(page)) <= 0, '戻るボタンが出ても横にはみ出さない');
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  await page.click('#stop');
+
+  // 開いたままの画面に、次の楽譜が渡される（A は残り、B に入る）
+  const aura = readText('samples/aura_lea_jazz.musicxml');
+  const next = await incomingHash([{ name: 'バラード_丸サ進行_C.musicxml', text: aura }], BACK);
+  await page.evaluate((h) => { location.hash = h; }, next);
+  await waitReadyFor(page, 18);
+  assert.equal(await page.textContent('#scores option:checked'), 'バラード_丸サ進行_C.musicxml');
+  assert.equal(await page.inputValue('select[data-slot="A"]'), 'file:1');
+  assert.equal(await page.inputValue('select[data-slot="B"]'), 'file:2');
+  assert.equal(await page.getAttribute('.slot-btn[data-slot="B"]', 'aria-pressed'), 'true');
+
+  // 戻り先は端末に覚える（次に # なしで開いても、戻るボタンが出る）
+  await page.goto(baseUrl);
+  await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+  assert.equal(await page.getAttribute('#back', 'href'), BACK);
+  assert.match(await page.textContent('#status'), /18小節/);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(outside, []);
+  await page.close();
+});
+
+test('受け取り：2本を一度に渡すと、A と B に入って聴き比べられる', async () => {
+  const hash = await incomingHash([
+    { name: 'い.musicxml', text: readText('samples/jingle_bells_pop.musicxml') },
+    { name: 'ろ.musicxml', text: readText('samples/aura_lea_jazz.musicxml') },
+  ]);
+  const { page } = await openPage(1180, 820, 'light', hash);
+  await waitReadyFor(page, 16);
+  assert.equal(await page.inputValue('select[data-slot="A"]'), 'file:1');
+  assert.equal(await page.inputValue('select[data-slot="B"]'), 'file:2');
+  await page.click('.slot-btn[data-slot="B"]');
+  await waitReadyFor(page, 18);
+  await page.close();
+});
+
+test('受け取り：はじめは戻るボタンが無く、知らない戻り先は受け取らない', async () => {
+  const hash = await incomingHash([], 'https://example.com/exec');
+  const { page, errors } = await openPage(820, 1180, 'light', hash);
+  assert.equal(await page.isVisible('#back'), false);
+  assert.equal(await page.getAttribute('#back', 'href'), null);
+  assert.match(await page.textContent('#status'), /18小節/); // 楽譜が無ければ、見本が開く
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('受け取り：壊れた中身のときは、知らせを出して見本を開く', async () => {
+  const { page } = await openPage(820, 1180, 'light', '#name=x&z=AAAA_-__');
+  const status = await page.textContent('#status');
+  assert.match(status, /受け取った楽譜を読めませんでした/);
+  assert.match(status, /18小節/);
+  // 開いたままの画面に壊れたものが渡されたときも、知らせる（いまの楽譜はそのまま）
+  await page.evaluate(() => { location.hash = '#z=AAAA_-__&n=2'; });
+  await page.waitForFunction(() => document.getElementById('status').textContent.startsWith('受け取った楽譜を読めませんでした'));
+  assert.equal(await page.evaluate(() => window.__app.state.score.masterBars.length), 18);
   await page.close();
 });
 

@@ -163,3 +163,20 @@ export function readZipEntry(bytes, entry) {
   const data = b.subarray(start, start + entry.compressedSize);
   return entry.method === 8 ? zlib.inflateRawSync(data) : data;
 }
+
+/** 楽譜の文を、URL の # より後ろで渡す形（deflate-raw → base64url）にする。src/incoming.js の逆 */
+export async function packForUrl(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return Buffer.from(await new Response(stream).arrayBuffer()).toString('base64url');
+}
+
+/** 受け渡しの URL の # より後ろを作る。scores：[{ name, text }] */
+export async function incomingHash(scores, back = null) {
+  const parts = [];
+  for (const s of scores) {
+    parts.push(`name=${encodeURIComponent(s.name)}`);
+    parts.push(`z=${await packForUrl(s.text)}`);
+  }
+  if (back) parts.push(`back=${encodeURIComponent(back)}`);
+  return `#${parts.join('&')}`;
+}

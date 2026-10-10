@@ -8,6 +8,7 @@ const ASSETS = [
   './',
   './index.html',
   './src/app.js',
+  './src/incoming.js',
   './src/load.js',
   './src/mxl.js',
   './src/prepare.js',
