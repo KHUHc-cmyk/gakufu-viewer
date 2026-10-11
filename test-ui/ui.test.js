@@ -187,8 +187,8 @@ test('「ここから」「ここまで」で、いまの小節がくり返し�
   const { page, errors } = await openPage(820, 1180);
   await tapBar(page, 4);
   await page.click('#loop-from-here');
-  // はじめの範囲は 1〜4。5 から始めると逆さになるので、終わりも 5 にそろう
-  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['5', '5']);
+  // はじめの範囲は、曲の全部（1〜18）。5 から始めると、5〜18 になる
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['5', '18']);
   await tapBar(page, 7);
   await page.click('#loop-to-here');
   assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['5', '8']);
@@ -210,6 +210,49 @@ test('「ここから」「ここまで」で、いまの小節がくり返し�
   await tapBar(page, 1);
   await page.click('#loop-to-here');
   assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['2', '2']);
+  // 範囲より後ろの小節で「ここから」を押すと、終わりも同じ小節にそろう
+  await tapBar(page, 6);
+  await page.click('#loop-from-here');
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['7', '7']);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('くり返し：はじめの範囲は曲の全部。印を付けるだけで通してくり返し、全部のときは色を付けない', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['1', '18']);
+  await page.check('#loop');
+  const whole = await page.evaluate(() => {
+    const { api, state } = window.__app;
+    const mb = state.score.masterBars;
+    const last = mb[mb.length - 1];
+    return {
+      looping: api.isLooping,
+      start: api.playbackRange.startTick,
+      end: api.playbackRange.endTick,
+      expectedEnd: api.tickCache.getMasterBarStart(last) + last.calculateDuration(),
+    };
+  });
+  assert.equal(whole.looping, true);
+  assert.equal(whole.start, 0);
+  assert.equal(whole.end, whole.expectedEnd);
+  const tinted = () => page.$$eval('.at-selection div', (ds) => ds.length);
+  assert.equal(await tinted(), 0, '全部のときは色を付けない');
+  // 範囲をせばめると色が付き、全部に戻すと消える
+  await page.fill('#loop-to', '4');
+  await page.dispatchEvent('#loop-to', 'change');
+  await page.waitForFunction(() => document.querySelectorAll('.at-selection div').length > 0);
+  await page.fill('#loop-to', '18');
+  await page.dispatchEvent('#loop-to', 'change');
+  await page.waitForFunction(() => document.querySelectorAll('.at-selection div').length === 0);
+  // 小節の数が違う楽譜を開くと、範囲はその曲の全部になり、くり返しの印は残る
+  await page.click('#stop');
+  await page.selectOption('#scores', { label: 'jingle_bells_pop.musicxml' });
+  await waitShown(page, 16);
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['1', '16']);
+  assert.equal(await page.isChecked('#loop'), true);
+  assert.equal(await page.evaluate(() => window.__app.api.isLooping), true);
+  assert.equal(await tinted(), 0);
   assert.deepEqual(errors, []);
   await page.close();
 });
@@ -270,13 +313,15 @@ test('読めないファイルは、たたんでいても知らせが見える',
   await page.close();
 });
 
-test('テンポ・メトロノーム・カウントイン・大きさは、開き直しても残る', async () => {
+test('テンポ・メトロノーム・カウントイン・大きさ・くり返しの印は、開き直しても残る', async () => {
   const { page, errors } = await openPage(820, 1180);
   await page.fill('#tempo', '150');
   await page.dispatchEvent('#tempo', 'input');
   await page.dispatchEvent('#tempo', 'change');
   await page.check('#metronome');
   await page.selectOption('#zoom', '1.25');
+  await page.fill('#loop-to', '6');
+  await page.check('#loop');
   await page.reload();
   await openDefaults(page);
   assert.equal(await page.inputValue('#tempo'), '150');
@@ -284,6 +329,10 @@ test('テンポ・メトロノーム・カウントイン・大きさは、開�
   assert.equal(await page.isChecked('#metronome'), true);
   assert.equal(await page.isChecked('#countin'), false);
   assert.equal(await page.inputValue('#zoom'), '1.25');
+  // くり返しは印だけ覚える。範囲は覚えず、曲の全部に戻る
+  assert.equal(await page.isChecked('#loop'), true);
+  assert.deepEqual([await page.inputValue('#loop-from'), await page.inputValue('#loop-to')], ['1', '18']);
+  assert.equal(await page.evaluate(() => window.__app.api.isLooping), true);
   assert.deepEqual(
     await page.evaluate(() => {
       const { api } = window.__app;

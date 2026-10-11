@@ -72,6 +72,7 @@ function saveSettings() {
       tempo: Number(el.tempo.value),
       metronome: el.metronome.checked,
       countin: el.countin.checked,
+      loop: el.loop.checked,
       zoom: el.zoom.value,
       backUrl,
     }));
@@ -86,6 +87,7 @@ function saveSettings() {
   el.tempoOut.textContent = `${el.tempo.value}%`;
   el.metronome.checked = saved.metronome === true;
   el.countin.checked = saved.countin === true;
+  el.loop.checked = saved.loop === true; // 範囲は覚えない（楽譜を開くたびに、曲の全部に戻る）
   if ([...el.zoom.options].some((o) => o.value === saved.zoom)) el.zoom.value = saved.zoom;
   setBackUrl(safeBackUrl(saved.backUrl));
 }
@@ -308,7 +310,7 @@ async function open(value, keep = null) {
     el.loopFrom.max = el.loopTo.max = String(barCount());
     if (!keep) {
       el.loopFrom.value = '1';
-      el.loopTo.value = String(Math.min(4, barCount()));
+      el.loopTo.value = String(barCount()); // はじめの範囲は、曲の全部（「くり返し」に印を付けるだけで、通してくり返す）
       state.currentBar = 0;
       el.position.textContent = '';
     }
@@ -656,8 +658,13 @@ function applyLoop() {
  * くり返しの範囲に色を付ける。
  * 楽譜を替えた直後は、並びの情報がまだ前の楽譜のままのことがあり、そのまま頼むと alphaTab の中で例外になる。
  * 新しい楽譜の拍が並びの情報に入るまでは付けず、描画が終わったときにもう一度付ける。
+ * 範囲が曲の全部のときは、色を付けない（楽譜がぜんぶ色付きになって、見づらい）。
  */
 function highlightLoop(from, to) {
+  if (from === 0 && to === barCount() - 1) {
+    api.clearPlaybackRangeHighlight();
+    return;
+  }
   const lookup = api.renderer.boundsLookup;
   const a = firstBeatOf(from);
   const b = lastBeatOf(to);
@@ -671,7 +678,10 @@ api.postRenderFinished.on(() => {
   highlightLoop(Math.min(from, to), Math.max(from, to));
 });
 
-el.loop.addEventListener('change', applyLoop);
+el.loop.addEventListener('change', () => {
+  applyLoop();
+  saveSettings();
+});
 el.loopFrom.addEventListener('change', applyLoop);
 el.loopTo.addEventListener('change', applyLoop);
 
