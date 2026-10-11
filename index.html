@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>楽譜ビューア</title>
+<title>楽譜ビューア(MXML)</title>
 <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
@@ -16,6 +16,7 @@
       <input id="file" type="file" multiple>
     </label>
     <a id="back" class="btn sub" hidden>コード進行へ</a>
+    <a id="to-pdf" class="btn sub" href="pdf.html" hidden>PDF の楽譜へ</a>
     <select id="scores" aria-label="楽譜" hidden>
       <optgroup label="開いたファイル" id="file-group"></optgroup>
     </select>

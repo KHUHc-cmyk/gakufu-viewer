@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>楽譜ビューア(PDF)</title>
+<link rel="stylesheet" href="src/style.css">
+<link rel="stylesheet" href="src/pdf.css">
+</head>
+<body class="pdf">
+<header id="toolbar" class="bar">
+  <div class="row">
+    <label class="btn file-btn">
+      ファイルを選ぶ
+      <input id="file" type="file" accept=".pdf,application/pdf" multiple>
+    </label>
+    <button id="shelf-open" type="button" class="btn">本棚</button>
+    <a id="to-mxml" class="btn sub" href="./" hidden>MusicXML の楽譜へ</a>
+    <a id="alone" class="btn sub" href="pdf.html" target="_blank" rel="noopener" hidden>別のタブで大きく開く</a>
+    <span id="title" class="title"></span>
+    <span id="status" role="status">準備しています…</span>
+  </div>
+  <div class="row main">
+    <button id="prev" type="button" class="btn" disabled>前へ</button>
+    <button id="next" type="button" class="btn primary" disabled>次へ</button>
+    <input id="seek" class="seek" type="range" min="1" max="1" step="1" value="1" aria-label="ページ" disabled>
+    <span id="position" class="position"></span>
+    <button id="hide" type="button" class="btn sub fold">かくす</button>
+  </div>
+  <div class="row">
+    <label class="group">表示
+      <select id="mode">
+        <option value="auto" selected>自動</option>
+        <option value="single">1ページ</option>
+        <option value="spread">見開き</option>
+        <option value="scroll">縦スクロール</option>
+      </select>
+    </label>
+    <label class="group toggle"><input id="half" type="checkbox"> 半ページめくり</label>
+    <label class="group toggle"><input id="crop" type="checkbox"> 余白カット</label>
+    <label class="group">色
+      <select id="tone">
+        <option value="plain" selected>ふつう</option>
+        <option value="sepia">セピア</option>
+        <option value="night">夜（白黒を逆に）</option>
+      </select>
+    </label>
+  </div>
+  <div class="row" id="auto-row" hidden>
+    <button id="auto" type="button" class="btn" aria-pressed="false">自動スクロール</button>
+    <div class="group tempo">
+      <label for="speed">速さ</label>
+      <input id="speed" type="range" min="1" max="20" step="1" value="4">
+      <span id="speed-out" class="position">4</span>
+    </div>
+  </div>
+</header>
+<main id="stage" data-tone="plain">
+  <div id="empty" class="empty">
+    <p class="lead">「ファイルを選ぶ」で、PDF の楽譜を開いてください</p>
+    <ul>
+      <li>画面の右をタップ＝次のページ／左をタップ＝前のページ（左右にはらっても、めくれます）</li>
+      <li>真ん中をタップ＝操作の欄を出す／かくす</li>
+      <li>キーボードとペダルは ← → ・PageUp／PageDown・スペース</li>
+      <li>開いた PDF は「本棚」に残り、次からは前回のページから開きます<span id="offline"></span></li>
+    </ul>
+  </div>
+</main>
+<div id="pager" class="pager" hidden></div>
+<section id="shelf" class="shelf" hidden aria-label="本棚">
+  <div class="shelf-box">
+    <div class="row">
+      <strong class="shelf-title">本棚</strong>
+      <button id="shelf-close" type="button" class="btn sub fold">とじる</button>
+    </div>
+    <p id="shelf-note" class="hint"></p>
+    <ul id="shelf-list" class="shelf-list"></ul>
+  </div>
+</section>
+<script type="module" src="src/pdf-app.js"></script>
+</body>
+</html>

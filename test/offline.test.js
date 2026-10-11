@@ -22,6 +22,9 @@ test('sw.js：画面・部品・音源・フォントが全部入っている', 
   const list = new Set(assets().map((u) => u.replace(/^[.][/]/, '')));
   const needed = [
     'index.html',
+    'pdf.html',
+    'vendor/pdfjs/pdf.mjs',
+    'vendor/pdfjs/pdf.worker.mjs',
     ...fs.readdirSync(path.join(root, 'src')).map((f) => `src/${f}`),
     ...fs.readdirSync(path.join(root, 'vendor/alphatab')).filter((f) => f.endsWith('.mjs')).map((f) => `vendor/alphatab/${f}`),
     'vendor/alphatab/font/Bravura.woff2',
@@ -36,5 +39,5 @@ test('見本：選び欄・保存の一覧・公開するファイルのどこ�
   assert.ok(!readText('src/app.js').includes('samples/'));
   for (const url of assets()) assert.ok(!url.includes('samples/'), `${url} が保存の一覧にある`);
   const copy = readText('.github/workflows/pages.yml').split('cp -r ')[1].split('_site/')[0];
-  assert.deepEqual(copy.trim().split(' '), ['index.html', 'sw.js', 'src', 'vendor']);
+  assert.deepEqual(copy.trim().split(' '), ['index.html', 'pdf.html', 'sw.js', 'src', 'vendor']);
 });

@@ -8,6 +8,7 @@ const el = {
   toolbar: $('toolbar'),
   file: $('file'),
   back: $('back'),
+  toPdf: $('to-pdf'),
   scores: $('scores'),
   fileGroup: $('file-group'),
   status: $('status'),
@@ -790,6 +791,9 @@ if ('serviceWorker' in navigator) {
     },
   );
 }
+
+// 枠の中（コード進行練習補助のタブ）で開いているときは、PDF のページへの行き来を出さない（タブで切り替える）
+if (window.top === window.self) el.toPdf.hidden = false;
 
 updateScrollOffset();
 refreshSlotOptions();

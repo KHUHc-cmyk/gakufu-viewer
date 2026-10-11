@@ -852,10 +852,10 @@ test('新しい版：保存済みでも、電波があれば、開き直した1�
     await page.goto(url);
     await openDefaults(page);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null && document.getElementById('offline').textContent.includes('保存済み'));
-    assert.equal(await page.title(), '楽譜ビューア');
+    assert.equal(await page.title(), '楽譜ビューア(MXML)');
 
     // 新しい版を出した（ページと src/ のファイルが変わった）
-    overrides.set('/index.html', readText('index.html').replace('<title>楽譜ビューア</title>', '<title>楽譜ビューア（新しい版）</title>'));
+    overrides.set('/index.html', readText('index.html').replace('<title>楽譜ビューア(MXML)</title>', '<title>楽譜ビューア（新しい版）</title>'));
     overrides.set('/src/style.css', `${readText('src/style.css')} #hint { letter-spacing: 3px; }`);
     await page.reload();
     await openDefaults(page);
