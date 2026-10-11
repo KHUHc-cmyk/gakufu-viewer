@@ -16,9 +16,16 @@ const TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-export function startServer(root, port = 0) {
+// overrides（パス → 中身）に入れたファイルは、フォルダの中身の代わりに、その中身を返す（新しい版を出した後のテスト用）
+export function startServer(root, port = 0, overrides = new Map()) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    const name = url.pathname === '/' ? '/index.html' : url.pathname;
+    if (overrides.has(name)) {
+      res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream' });
+      res.end(overrides.get(name));
+      return;
+    }
     let file = path.join(root, decodeURIComponent(url.pathname));
     if (!file.startsWith(root)) {
       res.writeHead(403).end();

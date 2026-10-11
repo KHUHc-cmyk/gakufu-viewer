@@ -738,3 +738,40 @@ test('オフライン：一度開けば、電波が無くても開けて再生�
   await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
   await context.close();
 });
+
+test('新しい版：保存済みでも、電波があれば、開き直した1回目から新しいページが出る', async () => {
+  const overrides = new Map();
+  const { server: second, url } = await startServer(root, 0, overrides);
+  const context = await browser.newContext({ viewport: { width: 820, height: 1180 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // 途中で落ちても、サーバーと画面を閉じる（閉じないと、テストが終わらない）
+  try {
+    await page.goto(url);
+    await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null && document.getElementById('offline').textContent.includes('保存済み'));
+    assert.equal(await page.title(), '楽譜ビューア');
+
+    // 新しい版を出した（ページと src/ のファイルが変わった）
+    overrides.set('/index.html', readText('index.html').replace('<title>楽譜ビューア</title>', '<title>楽譜ビューア（新しい版）</title>'));
+    overrides.set('/src/style.css', `${readText('src/style.css')} #hint { letter-spacing: 3px; }`);
+    await page.reload();
+    await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+    assert.equal(await page.title(), '楽譜ビューア（新しい版）');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('hint')).letterSpacing), '3px');
+
+    // そのあと電波が無くなっても、いま出した新しい版が開いて、再生できる
+    await context.setOffline(true);
+    await page.reload();
+    await page.waitForSelector('#play:not([disabled])', { timeout: 60000 });
+    assert.equal(await page.title(), '楽譜ビューア（新しい版）');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('hint')).letterSpacing), '3px');
+    await page.click('#play');
+    await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+    second.close();
+  }
+});
