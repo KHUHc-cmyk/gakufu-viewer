@@ -570,6 +570,149 @@ test('再生の直後に止めても、エラーにならず、音の出口が�
   await page.close();
 });
 
+// ---------------------------------------------------------------- 鳴らすパート
+
+async function openTwoParts(page) {
+  const xml = readText('test/fixtures/scale_two_parts.musicxml');
+  await page.setInputFiles('#file', [{ name: '2パート.musicxml', mimeType: 'application/xml', buffer: Buffer.from(xml) }]);
+  await waitShown(page, 1);
+}
+
+// 描画はワーカーで後から終わる。終わる前に小節の少ない楽譜へ替えると、前の楽譜の描画の結果が遅れて届き、
+// alphaTab の中で例外になる（画面は次の描画で直る）。替える前に、いまの楽譜が並び終わるのを待つ
+async function waitShown(page, bars) {
+  await waitReadyFor(page, bars);
+  await page.waitForFunction((n) => {
+    const lookup = window.__app.api.renderer.boundsLookup;
+    return lookup && new Set(lookup.staffSystems.flatMap((s) => s.bars.map((b) => b.index))).size === n;
+  }, bars);
+}
+
+function partStates(page) {
+  return page.$$eval('.part-btn', (bs) => bs.map((b) => `${b.textContent}:${b.getAttribute('aria-pressed')}`));
+}
+
+test('鳴らすパート：1パートの楽譜では出ず、2パートの楽譜ではパートごとのボタンが出る', async () => {
+  const { page, errors } = await openPage(820, 1180);
+  assert.equal(await page.isVisible('#parts'), false);
+  await openTwoParts(page);
+  assert.equal(await page.isVisible('#parts'), true);
+  assert.deepEqual(await partStates(page), ['Flute:true', 'Guitar:true']);
+  assert.ok((await overflow(page)) <= 0, '行が増えても横にはみ出さない');
+
+  await page.click('.part-btn:has-text("Guitar")');
+  assert.deepEqual(await partStates(page), ['Flute:true', 'Guitar:false']);
+
+  // 1パートの見本に替えると行が消え、戻ると、鳴らさないパートはそのまま
+  await page.selectOption('#scores', { index: 0 });
+  await waitShown(page, 18);
+  assert.equal(await page.isVisible('#parts'), false);
+  await page.selectOption('#scores', { label: '2パート.musicxml' });
+  await waitShown(page, 1);
+  assert.deepEqual(await partStates(page), ['Flute:true', 'Guitar:false']);
+
+  await page.click('#parts-all');
+  assert.deepEqual(await partStates(page), ['Flute:true', 'Guitar:true']);
+
+  // たたむと、この行も消える
+  await page.click('#fold');
+  assert.equal(await page.isVisible('#parts'), false);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('鳴らすパート：ボタンで消したパートの音だけが出なくなる', async () => {
+  const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // 音の出口に測る部品（AnalyserNode）をつないで、出ている音を確かめる
+  await page.addInitScript(() => {
+    const Original = window.AudioWorkletNode;
+    window.AudioWorkletNode = class extends Original {
+      constructor(...args) {
+        super(...args);
+        const analyser = this.context.createAnalyser();
+        analyser.fftSize = 8192;
+        analyser.smoothingTimeConstant = 0;
+        window.__analyser = analyser;
+        const connect = this.connect.bind(this);
+        this.connect = (...a) => { connect(analyser); return connect(...a); };
+      }
+    };
+  });
+  await page.goto(baseUrl);
+  await waitShown(page, 18);
+  await openTwoParts(page);
+  await page.check('#loop');
+  await page.fill('#loop-to', '1');
+  await page.dispatchEvent('#loop-to', 'change');
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing' && window.__analyser);
+
+  // 2.5秒（1小節より長く）測る。peak＝音の大きさ、low＝ギターの音域（240〜370Hz）の強さ。
+  // フルートは1オクターブ上（523Hz〜）なので、フルートだけのときは low が下がる
+  const measure = () => page.evaluate(async () => {
+    const a = window.__analyser;
+    const wave = new Float32Array(a.fftSize);
+    const freq = new Float32Array(a.frequencyBinCount);
+    const hz = a.context.sampleRate / a.fftSize;
+    let peak = 0;
+    let low = -200;
+    await new Promise((r) => setTimeout(r, 1000)); // 先に作ってある音（約0.5秒ぶん）が鳴り終わるのを待つ
+    const end = performance.now() + 2500;
+    while (performance.now() < end) {
+      a.getFloatTimeDomainData(wave);
+      a.getFloatFrequencyData(freq);
+      for (const v of wave) peak = Math.max(peak, Math.abs(v));
+      low = Math.max(low, ...freq.slice(Math.floor(240 / hz), Math.ceil(370 / hz)));
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return { peak, low };
+  });
+
+  const both = await measure();
+  assert.ok(both.peak > 0.01, `2つとも鳴る（${JSON.stringify(both)}）`);
+
+  await page.click('.part-btn:has-text("Flute")');
+  const guitarOnly = await measure();
+  assert.ok(guitarOnly.peak > 0.01, `ギターは鳴る（${JSON.stringify(guitarOnly)}）`);
+  assert.ok(guitarOnly.low > both.low - 10, `ギターの音域は残る（${JSON.stringify({ both, guitarOnly })}）`);
+
+  await page.click('.part-btn:has-text("Guitar")');
+  const none = await measure();
+  assert.ok(none.peak < 0.001, `2つとも消すと無音（${JSON.stringify(none)}）`);
+
+  await page.click('.part-btn:has-text("Flute")');
+  const fluteOnly = await measure();
+  assert.ok(fluteOnly.peak > 0.01, `フルートは鳴る（${JSON.stringify(fluteOnly)}）`);
+  assert.ok(fluteOnly.low < both.low - 20, `ギターの音域が消える（${JSON.stringify({ both, fluteOnly })}）`);
+
+  // 楽譜を開き直しても（MIDI を作り直しても）、消したパートは鳴らないまま
+  await page.click('#stop');
+  await page.selectOption('#scores', { index: 0 });
+  await waitShown(page, 18);
+  await page.selectOption('#scores', { label: '2パート.musicxml' });
+  await waitShown(page, 1);
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  const again = await measure();
+  assert.ok(again.peak > 0.01, `開き直してもフルートは鳴る（${JSON.stringify(again)}）`);
+  assert.ok(again.low < both.low - 20, `開き直してもギターは鳴らない（${JSON.stringify({ both, again })}）`);
+
+  // 1パートの楽譜は、同じチャンネルを消していても鳴る
+  await page.click('#stop');
+  await page.click('.part-btn:has-text("Flute")');
+  await page.selectOption('#scores', { index: 0 });
+  await waitShown(page, 18);
+  await page.click('#play');
+  await page.waitForFunction(() => document.getElementById('play').dataset.state === 'playing');
+  const sample = await measure();
+  assert.ok(sample.peak > 0.01, `1パートの見本は鳴る（${JSON.stringify(sample)}）`);
+
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 // ---------------------------------------------------------------- オフライン
 
 test('オフライン：一度開けば、電波が無くても開けて再生できる', async () => {

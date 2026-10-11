@@ -23,6 +23,9 @@ const el = {
   metronome: $('metronome'),
   countin: $('countin'),
   zoom: $('zoom'),
+  parts: $('parts'),
+  partButtons: $('part-buttons'),
+  partsAll: $('parts-all'),
   fold: $('fold'),
   position: $('position'),
   score: $('score'),
@@ -153,6 +156,7 @@ const state = {
   activeSlot: 'A',
   pendingPosition: null, // 切り替えの後に戻す位置 { barIndex, fraction, wasPlaying }
   currentBar: 0, // いまいる小節（0 始まり）。「ここから」「ここまで」で使う
+  mutedParts: new Set(), // 鳴らさないパートの名前（楽譜を切り替えても、同じ名前のパートは鳴らさないまま）
 };
 
 window.__app = { api, state }; // 画面のテスト用
@@ -312,6 +316,7 @@ async function open(value, keep = null) {
       el.position.textContent = '';
     }
     api.renderScore(result.score, result.score.tracks.map((t) => t.index));
+    renderParts();
     const notes = [];
     if (result.mode === 'raw') notes.push('整えずにそのまま表示');
     if (result.applied && result.applied.hammerPullsMissed + result.applied.harmonicsMissed > 0) {
@@ -536,6 +541,55 @@ el.countin.addEventListener('change', () => {
   saveSettings();
 });
 
+// ---------------------------------------------------------------- 鳴らすパート（パートが2つ以上の楽譜だけ）
+
+const PART_LABELS = { chords: 'コード', bass: 'ベース', drums: 'ドラム' };
+
+/** パートごとの名前（同じ名前が2つ以上あるときは、番号を付けて見分ける） */
+function partNames(score) {
+  const names = score.tracks.map((t) => {
+    const name = (t.name || '').trim();
+    return PART_LABELS[name.toLowerCase()] ?? (name || `パート ${t.index + 1}`);
+  });
+  return names.map((n, i) => (names.indexOf(n) === names.lastIndexOf(n) ? n : `${n} ${i + 1}`));
+}
+
+/** 画面のボタンのとおりに、再生側へ伝える（鳴らさないパートを後に伝える。チャンネルが重なっても、消すほうを優先する） */
+function applyParts() {
+  if (!state.score || !state.playerReady) return;
+  const tracks = state.score.tracks;
+  const names = partNames(state.score);
+  const muted = tracks.length > 1 ? tracks.filter((t, i) => state.mutedParts.has(names[i])) : [];
+  api.changeTrackMute(tracks.filter((t) => !muted.includes(t)), false);
+  if (muted.length) api.changeTrackMute(muted, true);
+}
+
+function renderParts() {
+  el.partButtons.textContent = '';
+  const tracks = state.score ? state.score.tracks : [];
+  el.parts.hidden = tracks.length < 2;
+  if (tracks.length < 2) return;
+  for (const name of partNames(state.score)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn part-btn';
+    b.textContent = name;
+    b.setAttribute('aria-pressed', String(!state.mutedParts.has(name)));
+    b.addEventListener('click', () => {
+      if (!state.mutedParts.delete(name)) state.mutedParts.add(name);
+      b.setAttribute('aria-pressed', String(!state.mutedParts.has(name)));
+      applyParts();
+    });
+    el.partButtons.appendChild(b);
+  }
+}
+
+el.partsAll.addEventListener('click', () => {
+  state.mutedParts.clear();
+  renderParts();
+  applyParts();
+});
+
 // ---------------------------------------------------------------- 楽譜の大きさ
 
 el.zoom.addEventListener('change', () => {
@@ -597,11 +651,28 @@ function applyLoop() {
   const endTick = api.tickCache.getMasterBarStart(toBar) + toBar.calculateDuration();
   api.playbackRange = { startTick, endTick };
   api.isLooping = true;
-  const a = firstBeatOf(from);
-  const b = lastBeatOf(to);
-  if (a && b) api.highlightPlaybackRange(a, b);
+  highlightLoop(from, to);
   if (api.tickPosition < startTick || api.tickPosition >= endTick) api.tickPosition = startTick;
 }
+
+/**
+ * くり返しの範囲に色を付ける。
+ * 楽譜を替えた直後は、並びの情報がまだ前の楽譜のままのことがあり、そのまま頼むと alphaTab の中で例外になる。
+ * 新しい楽譜の拍が並びの情報に入るまでは付けず、描画が終わったときにもう一度付ける。
+ */
+function highlightLoop(from, to) {
+  const lookup = api.renderer.boundsLookup;
+  const a = firstBeatOf(from);
+  const b = lastBeatOf(to);
+  if (a && b && lookup && lookup.findBeat(a) && lookup.findBeat(b)) api.highlightPlaybackRange(a, b);
+}
+
+api.postRenderFinished.on(() => {
+  if (!state.score || !el.loop.checked) return;
+  const from = clampBar(el.loopFrom);
+  const to = clampBar(el.loopTo);
+  highlightLoop(Math.min(from, to), Math.max(from, to));
+});
 
 el.loop.addEventListener('change', applyLoop);
 el.loopFrom.addEventListener('change', applyLoop);
@@ -672,6 +743,7 @@ api.playerReady.on(() => {
   if (state.scoreStatus) setStatus(state.scoreStatus);
   refreshButtons();
   applyPlayerSettings();
+  applyParts();
   if (el.loop.checked) applyLoop();
   const keep = state.pendingPosition;
   state.pendingPosition = null;

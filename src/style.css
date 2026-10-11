@@ -77,6 +77,12 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .position { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { margin: 8px 16px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 #offline:not(:empty)::before { content: "・"; }
+.row[hidden] { display: none; }
+.parts-label { font-size: 15px; white-space: nowrap; }
+.part-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.part-btn { padding: 0 14px; font-size: 15px; }
+.part-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.part-btn[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
 .compare-label { font-size: 15px; white-space: nowrap; }
 .slot { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 180px; min-width: 0; }
 .slot select { flex: 1 1 auto; min-width: 0; padding: 0 8px; font-size: 15px; }

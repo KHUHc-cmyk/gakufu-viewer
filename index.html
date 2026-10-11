@@ -52,6 +52,11 @@
     <label class="group toggle"><input id="metronome" type="checkbox"> メトロノーム</label>
     <label class="group toggle"><input id="countin" type="checkbox"> カウントイン</label>
   </div>
+  <div class="row parts" id="parts" hidden>
+    <span class="parts-label">鳴らすパート</span>
+    <span id="part-buttons" class="part-buttons"></span>
+    <button id="parts-all" type="button" class="btn sub">全部鳴らす</button>
+  </div>
   <div class="row compare" id="compare">
     <span class="compare-label">聴き比べ</span>
     <span class="slot"><button type="button" class="btn slot-btn" data-slot="A" aria-pressed="false">A</button><select data-slot="A" aria-label="A の楽譜"></select></span>
