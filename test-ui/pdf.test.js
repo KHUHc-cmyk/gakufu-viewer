@@ -64,6 +64,17 @@ function ink(page, n) {
   }, n);
 }
 
+/** 縦スクロールの動きが止まるまで待つ（0.3 秒、位置が変わらなければ止まったとみなす） */
+async function waitScrollEnd(page) {
+  let last = -1;
+  for (let i = 0; i < 40; i++) {
+    const top = await page.evaluate(() => document.getElementById('stage').scrollTop);
+    if (top === last) return;
+    last = top;
+    await page.waitForTimeout(300);
+  }
+}
+
 function overflow(page) {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
@@ -364,6 +375,7 @@ test('縦スクロール：全部のページが縦に並び、近くのペー�
   const before = await page.evaluate(() => document.getElementById('stage').scrollTop);
   await page.keyboard.press('ArrowRight');
   await page.waitForFunction((top) => document.getElementById('stage').scrollTop > top + 300, before);
+  await waitScrollEnd(page); // なめらかに動いている途中で、いまのページが変わることがある
   // 1ページ表示に戻すと、いまのページが出る
   const now = Number((await page.textContent('#position')).split(' / ')[0]);
   await page.selectOption('#mode', 'single');
@@ -569,18 +581,20 @@ test('行き来：単体で開くと「MusicXML の楽譜へ」「PDF の楽譜�
   assert.ok(await page.isHidden('#alone'));
   await page.click('#to-mxml');
   await page.waitForFunction(() => document.title === '楽譜ビューア(MXML)');
-  assert.ok(await page.isVisible('#to-pdf'));
+  // ボタンは、ページのスクリプトが動いてから出る（題名より後）。出るまで待つ
+  await page.waitForSelector('#to-pdf', { state: 'visible' });
   await page.click('#to-pdf');
   await page.waitForFunction(() => document.title === '楽譜ビューア(PDF)');
+  await page.waitForSelector('#to-mxml', { state: 'visible' });
   // 枠（iframe）の中
   await page.setContent(`<iframe id="a" src="${baseUrl}pdf.html" style="width:800px;height:500px"></iframe><iframe id="b" src="${baseUrl}" style="width:800px;height:500px"></iframe>`);
   const inPdf = page.frameLocator('#a');
   const inMxml = page.frameLocator('#b');
-  await inPdf.locator('#shelf-open').waitFor();
-  await inMxml.locator('#play').waitFor();
-  await page.waitForTimeout(500);
+  // 枠の中では「別のタブで大きく開く」が出る（スクリプトが最後まで動いた印）。行き来のボタンは出ない
+  await inPdf.locator('#alone').waitFor({ state: 'visible' });
   assert.ok(await inPdf.locator('#to-mxml').isHidden());
-  assert.ok(await inPdf.locator('#alone').isVisible(), '枠の中では「別のタブで大きく開く」が出る');
+  // MusicXML の側は、スクリプトが最後まで動く（知らせが「ファイルを選ぶ…」になる）のを待ってから確かめる
+  await inMxml.locator('#status').filter({ hasText: 'ファイルを選ぶ' }).waitFor();
   assert.ok(await inMxml.locator('#to-pdf').isHidden());
   await page.close();
 });

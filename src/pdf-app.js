@@ -729,7 +729,9 @@ async function renderShelf() {
     name.textContent = titleOf(meta.name);
     const sub = document.createElement('span');
     sub.className = 'sub';
-    sub.textContent = meta.pages ? `${meta.pages} ページ・前回は ${meta.lastPage ?? 1} ページ目` : 'まだ開いていません';
+    // いま開いている PDF は、いまのページを出す（本棚に書き終わる前でも、合うように）
+    const last = state.meta && state.meta.id === meta.id ? state.pos.page : meta.lastPage ?? 1;
+    sub.textContent = meta.pages ? `${meta.pages} ページ・前回は ${last} ページ目` : 'まだ開いていません';
     open.append(name, sub);
     const del = document.createElement('button');
     del.type = 'button';
