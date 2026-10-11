@@ -152,7 +152,7 @@ const state = {
   loadToken: 0,
   notice: '', // 次に開いた楽譜の名前の前に、1回だけ出す知らせ
   cache: new Map(), // id → 読み込んだ結果（聴き比べで行き来するとき、読み直さない）
-  slots: { A: 'sample:samples/aura_lea_jazz.musicxml', B: 'sample:samples/jingle_bells_pop.musicxml', C: null },
+  slots: { A: null, B: null, C: null },
   activeSlot: 'A',
   pendingPosition: null, // 切り替えの後に戻す位置 { barIndex, fraction, wasPlaying }
   currentBar: 0, // いまいる小節（0 始まり）。「ここから」「ここまで」で使う
@@ -239,19 +239,16 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- 楽譜を開く
 
-async function bytesFor(value) {
-  if (value.startsWith('sample:')) {
-    const res = await fetch(value.slice('sample:'.length));
-    if (!res.ok) throw new Error(`見本を読めませんでした（${res.status}）`);
-    return new Uint8Array(await res.arrayBuffer());
-  }
+// はじめは楽譜を開かない（2026-10-11 に見本を外した）。開くのは、選んだファイルと、ほかのツールから受け取った楽譜だけ
+const EMPTY_TEXT = '「ファイルを選ぶ」で、楽譜を開いてください';
+
+function bytesFor(value) {
   const entry = state.files.get(value);
   if (!entry) throw new Error('ファイルが見つかりません');
   return entry.bytes;
 }
 
 function nameFor(value) {
-  if (value.startsWith('sample:')) return el.scores.selectedOptions[0]?.textContent ?? '';
   return state.files.get(value)?.name ?? '';
 }
 
@@ -280,7 +277,7 @@ function tickForPosition(pos) {
 
 async function readScore(value) {
   if (state.cache.has(value)) return state.cache.get(value);
-  const bytes = await bytesFor(value);
+  const bytes = bytesFor(value);
   const result = await loadScore(alphaTab, bytes, api.settings);
   state.cache.set(value, result);
   return result;
@@ -395,9 +392,9 @@ for (const select of el.slotSelects) {
   });
 }
 
-/** 新しく開いたファイルを、空いている（または見本の入っている）A→B→C に入れる */
+/** 新しく開いたファイルを、空いている A→B→C に入れる */
 function assignFilesToSlots(ids) {
-  const free = SLOT_NAMES.filter((n) => !state.slots[n] || state.slots[n].startsWith('sample:'));
+  const free = SLOT_NAMES.filter((n) => !state.slots[n]);
   ids.slice(0, free.length).forEach((id, i) => {
     state.slots[free[i]] = id;
   });
@@ -416,7 +413,7 @@ function addScores(list) {
     added.push(id);
   }
   if (added.length) {
-    el.fileGroup.hidden = false;
+    el.scores.hidden = false;
     assignFilesToSlots(added);
     refreshSlotOptions();
     el.scores.value = added[0];
@@ -729,7 +726,7 @@ el.score.addEventListener('click', (e) => {
 // ---------------------------------------------------------------- alphaTab の知らせ
 
 api.soundFontLoad.on((e) => {
-  if (e.total > 0 && !state.soundFontLoaded) setStatus(`音源を読み込んでいます… ${Math.floor((e.loaded / e.total) * 100)}%`);
+  if (e.total > 0 && !state.soundFontLoaded && state.loadToken > 0) setStatus(`音源を読み込んでいます… ${Math.floor((e.loaded / e.total) * 100)}%`);
 });
 // 注意：alphaTab 1.8.4 では api.midiLoaded に登録すると、中で同じ getter を呼び続けて止まる（ワーカー使用時）。
 // playerReady は「音源と MIDI がそろった」ときに、楽譜を読み込むたびに届くので、こちらを使う。
@@ -788,5 +785,7 @@ updateScrollOffset();
 refreshSlotOptions();
 setActiveSlot('A');
 openIncoming().then((opened) => {
-  if (!opened) open(el.scores.value);
+  if (opened) return;
+  setStatus(`${state.notice}${EMPTY_TEXT}`);
+  state.notice = '';
 });

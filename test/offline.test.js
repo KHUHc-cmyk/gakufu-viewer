@@ -18,7 +18,7 @@ test('sw.js：保存する一覧のファイルが、どれも実際にある', 
   }
 });
 
-test('sw.js：画面・部品・音源・フォント・見本が全部入っている', () => {
+test('sw.js：画面・部品・音源・フォントが全部入っている', () => {
   const list = new Set(assets().map((u) => u.replace(/^[.][/]/, '')));
   const needed = [
     'index.html',
@@ -26,15 +26,15 @@ test('sw.js：画面・部品・音源・フォント・見本が全部入って
     ...fs.readdirSync(path.join(root, 'vendor/alphatab')).filter((f) => f.endsWith('.mjs')).map((f) => `vendor/alphatab/${f}`),
     'vendor/alphatab/font/Bravura.woff2',
     'vendor/alphatab/soundfont/sonivox.sf2',
-    ...fs.readdirSync(path.join(root, 'samples')).map((f) => `samples/${f}`),
   ];
   for (const f of needed) assert.ok(list.has(f), `${f} が保存の一覧に無い`);
 });
 
-test('sw.js：見本の選び欄に出ている見本が、全部保存される', () => {
-  const html = readText('index.html');
-  const list = new Set(assets());
-  const samples = html.split('value="sample:').slice(1).map((s) => `./${s.slice(0, s.indexOf('"'))}`);
-  assert.ok(samples.length >= 2);
-  for (const s of samples) assert.ok(list.has(s), `${s} が保存の一覧に無い`);
+// 見本は 2026-10-11 に外した（samples/ は、テストの材料として残すだけ。画面にも、保存の一覧にも、公開するファイルにも入れない）
+test('見本：選び欄・保存の一覧・公開するファイルのどこにも入っていない', () => {
+  assert.ok(!readText('index.html').includes('samples/'));
+  assert.ok(!readText('src/app.js').includes('samples/'));
+  for (const url of assets()) assert.ok(!url.includes('samples/'), `${url} が保存の一覧にある`);
+  const copy = readText('.github/workflows/pages.yml').split('cp -r ')[1].split('_site/')[0];
+  assert.deepEqual(copy.trim().split(' '), ['index.html', 'sw.js', 'src', 'vendor']);
 });

@@ -20,8 +20,6 @@ const ASSETS = [
   './vendor/alphatab/font/Bravura.woff2',
   './vendor/alphatab/font/Bravura.woff',
   './vendor/alphatab/soundfont/sonivox.sf2',
-  './samples/aura_lea_jazz.musicxml',
-  './samples/jingle_bells_pop.musicxml',
 ];
 
 self.addEventListener('install', (event) => {
@@ -43,7 +41,7 @@ self.addEventListener('activate', (event) => {
 // アプリ本体（ページと src/ の小さいファイル）は、電波があれば新しいものを取りに行く。
 // 保存してあるものを先に出すと、新しい版を出した後の1回目は、前の版のまま開いてしまう（2026-10-11 に iPad で起きた）。
 // 取れないとき・SHELL_WAIT_MS たっても返らないときは、保存してあるものを出す。
-// alphaTab・音源・フォント・見本（大きくて、めったに変わらない）は、保存してあるものを先に出す。
+// alphaTab・音源・フォント（大きくて、めったに変わらない）は、保存してあるものを先に出す。
 const SHELL_WAIT_MS = 3000;
 
 function isShell(req) {

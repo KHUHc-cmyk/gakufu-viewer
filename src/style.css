@@ -63,7 +63,7 @@ select { padding: 0 12px; max-width: 100%; min-width: 0; flex: 1 1 220px; }
 .tempo { flex: 1 1 260px; }
 .tempo input { flex: 1 1 auto; min-width: 120px; accent-color: var(--accent); }
 .btn.sub { padding: 0 12px; font-size: 15px; }
-.btn[hidden] { display: none; }
+.btn[hidden], select[hidden] { display: none; }
 a.btn { text-decoration: none; white-space: nowrap; }
 .tempo-out { min-width: 4.4em; font-variant-numeric: tabular-nums; }
 .zoom select { flex: 0 0 auto; min-height: 40px; font-size: 15px; }

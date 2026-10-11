@@ -16,12 +16,8 @@
       <input id="file" type="file" multiple>
     </label>
     <a id="back" class="btn sub" hidden>コード進行へ</a>
-    <select id="scores" aria-label="楽譜">
-      <optgroup label="見本" id="sample-group">
-        <option value="sample:samples/aura_lea_jazz.musicxml">見本：Aura Lea（ジャズ）</option>
-        <option value="sample:samples/jingle_bells_pop.musicxml">見本：Jingle Bells（ポップ）</option>
-      </optgroup>
-      <optgroup label="開いたファイル" id="file-group" hidden></optgroup>
+    <select id="scores" aria-label="楽譜" hidden>
+      <optgroup label="開いたファイル" id="file-group"></optgroup>
     </select>
     <label class="group zoom">大きさ
       <select id="zoom">
