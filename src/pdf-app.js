@@ -4,6 +4,7 @@ import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, fin
 import * as store from './pdf-store.js';
 import { TOOLS, ERASER, toPage, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm } from './pdf-ink.js';
 import { createMetronome } from './pdf-metronome.js';
+import { findInShelf } from './pdf-shelf.js';
 import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate } from './pdf-setlist.js';
 
 const $ = (id) => document.getElementById(id);
@@ -69,6 +70,9 @@ const el = {
   shelfClose: $('shelf-close'),
   shelfNote: $('shelf-note'),
   shelfList: $('shelf-list'),
+  shelfTools: $('shelf-tools'),
+  shelfFind: $('shelf-find'),
+  shelfOrder: $('shelf-order'),
 };
 
 // pdf.js の部品（ワーカー・文字の対応表・基本のフォント・画像の読み手）は、同梱したものを使う
@@ -96,7 +100,7 @@ const NOTES_SAVE_MS = 600; // 書き込み・しおりを、変えてから保�
 // ---------------------------------------------------------------- 設定を覚える（この端末の中だけ）
 
 const SETTINGS_KEY = 'gakufu-viewer:pdf-settings';
-const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4, tool: 'black', bpm: 100, beats: 4, folded: false };
+const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4, tool: 'black', bpm: 100, beats: 4, folded: false, shelfOrder: 'opened' };
 
 function hasOption(select, value) {
   return [...select.options].some((o) => o.value === value);
@@ -134,6 +138,8 @@ function saveSettings() {
   if (hasOption(el.beats, String(saved.beats))) settings.beats = Number(saved.beats);
   el.bpm.value = String(settings.bpm);
   el.beats.value = String(settings.beats);
+  if (hasOption(el.shelfOrder, saved.shelfOrder)) settings.shelfOrder = saved.shelfOrder;
+  el.shelfOrder.value = settings.shelfOrder;
   // せまい画面（スマホ）では、はじめは たたんでおく（操作の欄が、画面の半分を越えるため）
   settings.folded = typeof saved.folded === 'boolean' ? saved.folded : window.innerWidth < 600;
 }
@@ -161,7 +167,7 @@ const state = {
   undo: [], // 元に戻せる操作（この PDF を開いている間だけ）
   outline: null, // PDF の目次（[{ title, page, level }]。まだ読んでいなければ null）
   sets: [], // セットリスト（[{ id, name, items, made }]。items は本棚の番号の並び）
-  shelf: [], // セットリストを読んだときの、本棚の一覧
+  shelf: [], // 最後に読んだ、本棚の一覧（最近開いた順）
   playing: null, // いま開いている曲の、セットリストの中の位置（{ id, index }。セットリストの外なら null）
   editing: null, // セットリストの欄で、中を見ているセットリストの番号（一覧なら null）
   crossing: false, // となりの曲を開いている途中
@@ -879,6 +885,14 @@ async function renderShelf() {
   el.shelfNote.textContent = keep
     ? 'PDF は、この端末のブラウザの中だけに保存します（外へは送りません）。「消す」で消えるのは、ここに保存した写しだけです。ブラウザのデータを消すと、本棚も空になります。'
     : 'この端末では保存できないので、ページを閉じると本棚は空になります。';
+  state.shelf = items;
+  drawShelf();
+}
+
+// 本棚の一覧を描く（探す言葉と並び順は、欄のいまの値）
+function drawShelf() {
+  el.shelfTools.hidden = !state.shelf.length;
+  const items = findInShelf(state.shelf, el.shelfFind.value, settings.shelfOrder);
   const rows = items.map((meta) => {
     const li = document.createElement('li');
     const open = document.createElement('button');
@@ -907,7 +921,9 @@ async function renderShelf() {
   if (!rows.length) {
     const li = document.createElement('li');
     li.className = 'hint';
-    li.textContent = 'まだありません。「ファイルを選ぶ」で開いた PDF が、ここに並びます。';
+    li.textContent = state.shelf.length
+      ? `「${el.shelfFind.value.trim()}」に合う PDF は、ありません。`
+      : 'まだありません。「ファイルを選ぶ」で開いた PDF が、ここに並びます。';
     rows.push(li);
   }
   el.shelfList.replaceChildren(...rows);
@@ -915,8 +931,17 @@ async function renderShelf() {
 
 function setShelfOpen(open) {
   el.shelf.hidden = !open;
-  if (open) renderShelf();
+  if (!open) return;
+  el.shelfFind.value = ''; // 開くたびに、全部を出す
+  renderShelf();
 }
+
+el.shelfFind.addEventListener('input', drawShelf);
+el.shelfOrder.addEventListener('change', () => {
+  settings.shelfOrder = el.shelfOrder.value;
+  saveSettings();
+  drawShelf();
+});
 
 el.shelfOpen.addEventListener('click', () => setShelfOpen(true));
 el.shelfClose.addEventListener('click', () => setShelfOpen(false));

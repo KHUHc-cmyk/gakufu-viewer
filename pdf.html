@@ -111,6 +111,15 @@
       <button id="shelf-close" type="button" class="btn sub fold">とじる</button>
     </div>
     <p id="shelf-note" class="hint"></p>
+    <div id="shelf-tools" class="row marks-add" hidden>
+      <input id="shelf-find" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" maxlength="40" placeholder="名前で探す" aria-label="本棚を名前で探す">
+      <label class="group">並び
+        <select id="shelf-order">
+          <option value="opened" selected>最近開いた順</option>
+          <option value="name">名前の順</option>
+        </select>
+      </label>
+    </div>
     <ul id="shelf-list" class="shelf-list"></ul>
   </div>
 </section>
