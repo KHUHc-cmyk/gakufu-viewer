@@ -6,14 +6,16 @@ const NL = String.fromCharCode(10);
  * count ページの PDF（Buffer）を返す。
  * margin：紙の端から、中身（枠の線）までの余白。大きくすると、余白カットで大きく切れる。
  * sizes：ページごとの紙の大きさ [[幅, 高さ], …]（足りない分は width × height）
+ * outline：PDF の目次 [[題（英数字だけ）, ページ番号], …]
  */
-export function makePdf(count, { width = 595, height = 842, margin = 120, sizes = [] } = {}) {
+export function makePdf(count, { width = 595, height = 842, margin = 120, sizes = [], outline = [] } = {}) {
   const objects = [];
   const add = (body) => objects.push(body);
   add('<< /Type /Catalog /Pages 2 0 R >>');
   add(''); // 2：ページの一覧（後で入れる）
   add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   const kids = [];
+  const pageIds = [];
   for (let i = 1; i <= count; i++) {
     const [w, h] = sizes[i - 1] ?? [width, height];
     const lines = ['0 0 0 RG', '3 w', `${margin} ${margin} ${w - margin * 2} ${h - margin * 2} re S`, '1 w'];
@@ -24,10 +26,23 @@ export function makePdf(count, { width = 595, height = 842, margin = 120, sizes 
     lines.push(`BT /F1 120 Tf ${Math.round(w / 2 - 40)} ${Math.round(h / 2 - 40)} Td (${i}) Tj ET`);
     const stream = lines.join(NL);
     kids.push(`${objects.length + 1} 0 R`);
+    pageIds.push(objects.length + 1);
     add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`);
     add(`<< /Length ${Buffer.byteLength(stream)} >>${NL}stream${NL}${stream}${NL}endstream`);
   }
   objects[1] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${count} >>`;
+  if (outline.length) {
+    const root = objects.length + 1;
+    const first = root + 1;
+    const last = root + outline.length;
+    add(`<< /Type /Outlines /First ${first} 0 R /Last ${last} 0 R /Count ${outline.length} >>`);
+    outline.forEach(([title, page], k) => {
+      const prev = k > 0 ? ` /Prev ${first + k - 1} 0 R` : '';
+      const next = k < outline.length - 1 ? ` /Next ${first + k + 1} 0 R` : '';
+      add(`<< /Title (${title}) /Parent ${root} 0 R /Dest [${pageIds[page - 1]} 0 R /Fit]${prev}${next} >>`);
+    });
+    objects[0] = `<< /Type /Catalog /Pages 2 0 R /Outlines ${root} 0 R >>`;
+  }
 
   let out = `%PDF-1.4${NL}`;
   const offsets = [];

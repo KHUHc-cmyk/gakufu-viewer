@@ -56,3 +56,26 @@ body.bar-hidden .bar { display: none; }
 .shelf-item .sub { color: var(--muted); font-size: 13px; }
 .shelf-item[aria-current="true"] { outline: 2px solid var(--accent); }
 .shelf-del { flex: 0 0 auto; min-height: 52px; }
+
+/* しおり・書き込み・メトロノーム */
+body.pdf .group select { flex: 0 0 auto; min-height: 40px; font-size: 15px; }
+#ink[aria-pressed="true"], #metro[aria-pressed="true"], .ink-tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.ink-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.ink-hint { color: var(--muted); font-size: 13px; }
+.sheet canvas.ink { position: absolute; inset: 0; pointer-events: none; }
+body.inking #stage { cursor: crosshair; }
+.beat-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--line); flex: 0 0 auto; }
+.beat-dot.on { background: var(--accent); }
+.beat-dot.on.first { background: #e0245e; }
+.pager.beat { background: rgba(10, 100, 216, 0.85); }
+.marks-add input { flex: 1 1 180px; min-width: 0; min-height: 44px; padding: 0 12px; font: inherit; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
+.shelf-item.level-1 { margin-left: 16px; }
+.shelf-item.level-2 { margin-left: 32px; }
+/* 操作の欄：せまい画面でも、楽譜の場所が残るようにする（高さは画面の6割まで。中で動かせる） */
+body.pdf .bar { max-height: 60dvh; overflow-y: auto; }
+/* たたんでいても、書き込みの道具は出す */
+.bar.folded #ink-row:not([hidden]) { display: flex; }
+.marks-add { margin: 8px 0; }
+#stage { -webkit-touch-callout: none; }
+/* 書き込み中は、紙の上の指やペンの動きで、画面を動かさない（縦スクロールでも） */
+body.inking #stage .sheet, body.inking #stage canvas { touch-action: none; }

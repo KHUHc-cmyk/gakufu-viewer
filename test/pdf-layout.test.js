@@ -146,7 +146,7 @@ test('pdf.js：保存する一覧（files.json）が、vendor/pdfjs の中身と
 });
 
 test('PDF のページ：外へ送る通信を書いていない（読むのは、同梱した部品だけ）', () => {
-  for (const file of ['src/pdf-app.js', 'src/pdf-layout.js', 'src/pdf-store.js', 'pdf.html']) {
+  for (const file of ['src/pdf-app.js', 'src/pdf-layout.js', 'src/pdf-store.js', 'src/pdf-ink.js', 'src/pdf-metronome.js', 'pdf.html']) {
     const text = readText(file);
     assert.ok(!text.includes('http://') && !text.includes('https://'), `${file} に外の URL がある`);
     assert.ok(!text.includes('fetch(') && !text.includes('XMLHttpRequest') && !text.includes('sendBeacon'), `${file} に通信がある`);

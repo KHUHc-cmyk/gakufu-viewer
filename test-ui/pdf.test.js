@@ -235,6 +235,16 @@ test('真ん中をタップ：操作の欄をかくす／出す。かくすと�
   await clickStage(page, 0.5);
   await page.waitForFunction(() => !document.body.classList.contains('bar-hidden'));
   assert.ok(await page.isVisible('#toolbar'));
+  // 「たたむ」は、めくる行だけを残す。楽譜が大きくなる
+  const open = await page.evaluate(() => document.getElementById('toolbar').getBoundingClientRect().height);
+  assert.equal(await page.textContent('#fold'), 'たたむ');
+  await page.click('#fold');
+  assert.equal(await page.textContent('#fold'), 'ひらく');
+  assert.ok(await page.isHidden('#mode'));
+  assert.ok(await page.isVisible('#next'));
+  assert.ok((await page.evaluate(() => document.getElementById('toolbar').getBoundingClientRect().height)) < open - 60);
+  await page.click('#fold');
+  assert.ok(await page.isVisible('#mode'));
   // 「かくす」ボタンでも、かくせる
   await page.click('#hide');
   assert.ok(await page.isHidden('#toolbar'));

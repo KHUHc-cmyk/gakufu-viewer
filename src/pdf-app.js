@@ -2,11 +2,32 @@
 import * as pdfjs from '../vendor/pdfjs/pdf.mjs';
 import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, findCrop, zoneAt, looksLikePdf, titleOf } from './pdf-layout.js';
 import * as store from './pdf-store.js';
+import { TOOLS, ERASER, toPage, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm } from './pdf-ink.js';
+import { createMetronome } from './pdf-metronome.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   file: $('file'),
   shelfOpen: $('shelf-open'),
+  marksOpen: $('marks-open'),
+  marks: $('marks'),
+  marksClose: $('marks-close'),
+  markName: $('mark-name'),
+  markAdd: $('mark-add'),
+  marksList: $('marks-list'),
+  outlineTitle: $('outline-title'),
+  outlineList: $('outline-list'),
+  ink: $('ink'),
+  inkRow: $('ink-row'),
+  inkTools: [...document.querySelectorAll('.ink-tool')],
+  inkUndo: $('ink-undo'),
+  inkClear: $('ink-clear'),
+  metro: $('metro'),
+  bpm: $('bpm'),
+  bpmDown: $('bpm-down'),
+  bpmUp: $('bpm-up'),
+  beats: $('beats'),
+  beatDot: $('beat-dot'),
   toMxml: $('to-mxml'),
   alone: $('alone'),
   title: $('title'),
@@ -16,6 +37,8 @@ const el = {
   seek: $('seek'),
   position: $('position'),
   hide: $('hide'),
+  fold: $('fold'),
+  toolbar: $('toolbar'),
   mode: $('mode'),
   half: $('half'),
   crop: $('crop'),
@@ -52,11 +75,14 @@ const SCROLL_MAX_WIDTH = 1200; // 縦スクロールの、ページの幅の上�
 const SCROLL_PAD = 8;
 const SPEED_STEP = 6; // 自動スクロール：速さ 1 あたりの、1秒に進む画素
 const SWIPE_MIN = 40;
+const INK_MAX_PIXELS = 3000000; // 書き込みを描くキャンバスの、画素の上限
+const ERASER_REACH = 0.012; // 消しゴムの大きさ（紙の幅に対する割合）
+const NOTES_SAVE_MS = 600; // 書き込み・しおりを、変えてから保存するまでの間
 
 // ---------------------------------------------------------------- 設定を覚える（この端末の中だけ）
 
 const SETTINGS_KEY = 'gakufu-viewer:pdf-settings';
-const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4 };
+const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4, tool: 'black', bpm: 100, beats: 4, folded: false };
 
 function hasOption(select, value) {
   return [...select.options].some((o) => o.value === value);
@@ -89,6 +115,13 @@ function saveSettings() {
   el.speed.value = String(settings.speed);
   el.speedOut.textContent = String(settings.speed);
   el.stage.dataset.tone = settings.tone;
+  if (TOOLS[saved.tool] || saved.tool === ERASER) settings.tool = saved.tool;
+  settings.bpm = clampBpm(saved.bpm);
+  if (hasOption(el.beats, String(saved.beats))) settings.beats = Number(saved.beats);
+  el.bpm.value = String(settings.bpm);
+  el.beats.value = String(settings.beats);
+  // せまい画面（スマホ）では、はじめは たたんでおく（操作の欄が、画面の半分を越えるため）
+  settings.folded = typeof saved.folded === 'boolean' ? saved.folded : window.innerWidth < 600;
 }
 
 // ---------------------------------------------------------------- 状態
@@ -109,9 +142,13 @@ const state = {
   observer: null,
   auto: 0, // 自動スクロールの requestAnimationFrame の番号
   box: { w: 0, h: 0 }, // 最後に描いたときの、表示の場所の大きさ
+  notes: emptyNotes(), // しおり（marks）と書き込み（ink：ページ番号 → 線の並び）
+  inkMode: false, // 書き込み中かどうか
+  undo: [], // 元に戻せる操作（この PDF を開いている間だけ）
+  outline: null, // PDF の目次（[{ title, page, level }]。まだ読んでいなければ null）
 };
 
-window.__pdf = { state, settings }; // 画面のテスト用
+window.__pdf = { state, settings, get metronome() { return metronome; } }; // 画面のテスト用
 
 function setStatus(text) {
   el.status.textContent = text;
@@ -122,8 +159,20 @@ function setBarHidden(hidden) {
   el.pager.hidden = !hidden || !state.doc;
 }
 
+function panelOpen() {
+  return !el.shelf.hidden || !el.marks.hidden;
+}
+
+// たたむ：めくる行だけを残す（設定の行をかくして、楽譜を広く見せる）
+function setFolded(folded) {
+  el.toolbar.classList.toggle('folded', folded);
+  el.fold.textContent = folded ? 'ひらく' : 'たたむ';
+  el.fold.setAttribute('aria-expanded', String(!folded));
+}
+
 function showError(text) {
-  setBarHidden(false); // かくしていても、知らせは見えるようにする
+  setBarHidden(false); // かくしていても・たたんでいても、知らせは見えるようにする
+  setFolded(false);
   setStatus(text);
 }
 
@@ -236,6 +285,64 @@ function sheetFor(n, w, h, canvas = null) {
   return sheet;
 }
 
+// ---------------------------------------------------------------- 書き込みを描く
+
+// その紙に、書き込み用のキャンバスを重ねる（紙のキャンバスを置いた後に呼ぶ）
+function attachInk(sheet) {
+  const n = Number(sheet.dataset.page);
+  const gen = state.gen;
+  shape(n).then((s) => {
+    if (gen !== state.gen || !sheet.isConnected) return;
+    const w = sheet.clientWidth;
+    const h = sheet.clientHeight;
+    if (!w || !h) return;
+    const ratio = pixelRatioFor(w, h, window.devicePixelRatio, INK_MAX_PIXELS);
+    const canvas = document.createElement('canvas');
+    canvas.className = 'ink';
+    canvas.width = Math.max(1, Math.round(w * ratio));
+    canvas.height = Math.max(1, Math.round(h * ratio));
+    if (sheet.inkInfo) sheet.inkInfo.canvas.remove();
+    sheet.inkInfo = { n, canvas, crop: s.crop, aspect: s.h / s.w };
+    sheet.append(canvas);
+    paintInk(sheet);
+  }).catch(() => {});
+}
+
+// その紙の書き込みを描き直す。live は、いま書いている途中の線
+function paintInk(sheet, live = null) {
+  const info = sheet.inkInfo;
+  if (!info) return;
+  const { canvas, crop } = info;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const scaleX = canvas.width / (crop.r - crop.l); // 紙の幅 1 あたりの画素
+  const scaleY = canvas.height / (crop.b - crop.t);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const strokes = state.notes.ink[info.n] ?? [];
+  for (const stroke of live ? [...strokes, live] : strokes) {
+    const tool = TOOLS[stroke.t];
+    if (!tool) continue;
+    const p = stroke.p;
+    ctx.globalAlpha = tool.alpha;
+    ctx.strokeStyle = tool.color;
+    ctx.lineWidth = Math.max(1, tool.width * scaleX);
+    ctx.beginPath();
+    ctx.moveTo((p[0] - crop.l) * scaleX, (p[1] - crop.t) * scaleY);
+    if (p.length === 2) ctx.lineTo((p[0] - crop.l) * scaleX + 0.01, (p[1] - crop.t) * scaleY);
+    for (let i = 2; i < p.length; i += 2) ctx.lineTo((p[i] - crop.l) * scaleX, (p[i + 1] - crop.t) * scaleY);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// 画面に出ている紙のうち、そのページのもの（pages を省くと全部）の書き込みを描き直す
+function repaintInk(pages = null) {
+  for (const sheet of el.stage.querySelectorAll('.sheet')) {
+    if (!pages || pages.includes(Number(sheet.dataset.page))) paintInk(sheet);
+  }
+}
+
 function layerOf(role, sheets) {
   const layer = document.createElement('div');
   layer.className = role ? `layer ${role}` : 'layer';
@@ -281,6 +388,7 @@ async function drawPaged() {
     return;
   }
   const sheets = plan.map((p, i) => sheetFor(p.n, p.w, p.h, entries[i].canvas));
+  const inkAfter = () => sheets.forEach(attachInk); // 画面に置いてから重ねる（大きさを読むため）
   if (pos.half && sheets.length === 2) {
     // 半ページめくりの途中：上半分に次のページ、下半分にいまのページ
     const divider = document.createElement('div');
@@ -289,6 +397,8 @@ async function drawPaged() {
   } else {
     setStage([layerOf('', sheets)]);
   }
+  inkAfter();
+  el.stage.dataset.drawn = `${box.w}x${box.h}`; // 描き終わった印（画面のテストが、並び直しの終わりを知るため）
   if (el.status.textContent.endsWith('描けませんでした')) setStatus('');
   // 次と前のページを先に描いておく（めくった時に、すぐ出るように）。それ以外のキャンバスは片付ける
   const keep = new Set(entries.map((e) => e.key));
@@ -342,7 +452,11 @@ async function showSlot(slot, gen) {
   const entry = getCanvas(slot.n, state.scrollWidth, slot.h);
   slot.entry = entry;
   const drawn = await entry.ready;
-  if (drawn && slot.entry === entry && slot.want) slot.el.replaceChildren(entry.canvas);
+  if (drawn && slot.entry === entry && slot.want) {
+    slot.el.inkInfo = null;
+    slot.el.replaceChildren(entry.canvas);
+    attachInk(slot.el);
+  }
 }
 
 function hideSlot(slot) {
@@ -350,6 +464,7 @@ function hideSlot(slot) {
   if (!slot.entry) return;
   dropCanvas(slot.entry);
   slot.entry = null;
+  slot.el.inkInfo = null;
   slot.el.replaceChildren();
 }
 
@@ -386,6 +501,7 @@ async function buildScroll() {
   }
   el.stage.classList.add('scroll');
   setStage([column]);
+  el.stage.dataset.drawn = `${box.w}x${box.h}`;
   scrollToPage(state.pos.page);
   // 画面の近くに来たページだけ描き、遠くへ行ったページは片付ける
   state.observer = new IntersectionObserver((records) => {
@@ -553,13 +669,15 @@ function goTo(page) {
 function applyTouch() {
   // 1ページ・見開きでは、左右にはらう動きをこのページで受け取る（広げて見ているときは、ブラウザに任せて動かせるようにする）
   const zoomed = (window.visualViewport?.scale ?? 1) > 1.01;
-  el.stage.style.touchAction = state.layout === 'scroll' ? 'pan-y pinch-zoom' : zoomed ? 'auto' : 'pinch-zoom';
+  // 書き込み中は、指やペンの動きを全部このページで受け取る（めくるのは「前へ」「次へ」）
+  el.stage.style.touchAction = state.inkMode ? 'none' : state.layout === 'scroll' ? 'pan-y pinch-zoom' : zoomed ? 'auto' : 'pinch-zoom';
 }
 
 // 表示の形を決め直して、描き直す（開いたとき・設定を変えたとき・画面の大きさが変わったとき）
 function relayout() {
   if (!state.doc) return;
-  state.layout = layoutFor(settings.mode, el.stage.clientWidth, el.stage.clientHeight);
+  // 「自動」は、画面（窓）の向きで決める。楽譜の場所の形で決めると、操作の欄が高いときに、縦長の画面でも見開きになってしまう
+  state.layout = layoutFor(settings.mode, window.innerWidth, window.innerHeight);
   state.pos = normalize(state.pos, state.layout, state.count, settings.half);
   el.autoRow.hidden = state.layout !== 'scroll';
   applyTouch();
@@ -577,6 +695,12 @@ function relayout() {
 function closeDocument() {
   state.gen += 1;
   savePage();
+  saveNotesNow();
+  setInkMode(false);
+  state.notes = emptyNotes();
+  state.undo = [];
+  state.outline = null;
+  el.inkUndo.disabled = true;
   teardownScroll();
   dropAllCanvases();
   state.bases.clear();
@@ -592,6 +716,8 @@ function closeDocument() {
 function setControls(on) {
   el.seek.disabled = !on;
   el.hide.disabled = !on;
+  el.marksOpen.disabled = !on;
+  el.ink.disabled = !on;
   if (!on) {
     el.prev.disabled = true;
     el.next.disabled = true;
@@ -631,10 +757,18 @@ async function openDocument(meta, bytes) {
     task.destroy().catch(() => {});
     return false;
   }
+  // しおりと書き込みを読む（本棚に入っている PDF だけ。読めなければ、空から始める）
+  let notes = null;
+  if (meta.id != null) notes = await store.notesOf(meta.id).catch(() => null);
+  if (token !== state.openToken) {
+    task.destroy().catch(() => {});
+    return false;
+  }
   closeDocument();
   state.doc = doc;
   state.meta = meta;
   state.count = doc.numPages;
+  state.notes = cleanNotes(notes, state.count);
   state.pos = { page: (meta.id != null ? notedPage(meta) : null) ?? meta.lastPage ?? 1, half: false };
   el.empty.hidden = true;
   el.title.textContent = titleOf(meta.name);
@@ -770,8 +904,12 @@ el.shelfList.addEventListener('click', async (e) => {
   } else if (del) {
     if (!window.confirm(`「${del.dataset.name}」を本棚から消しますか？（もとのファイルは消えません）`)) return;
     const id = Number(del.dataset.del);
+    if (state.meta && state.meta.id === id) {
+      clearTimeout(notesTimer); // 開いたままにする。覚え（ページ・しおり・書き込み）は、もう書かない
+      notesTimer = 0;
+      state.meta.id = null;
+    }
     await store.remove(id).catch(() => {});
-    if (state.meta && state.meta.id === id) state.meta.id = null; // 開いたままにする。覚えは、もう書かない
     renderShelf();
   }
 });
@@ -791,6 +929,12 @@ el.seek.addEventListener('input', () => {
 });
 el.seek.addEventListener('change', () => goTo(Number(el.seek.value)));
 el.hide.addEventListener('click', () => setBarHidden(true));
+el.fold.addEventListener('click', () => {
+  settings.folded = !el.toolbar.classList.contains('folded');
+  setFolded(settings.folded);
+  saveSettings();
+});
+setFolded(settings.folded);
 
 // 設定を変えた後は、その部品から離れる（そのままだと、キーボードやペダルの入力が、選び欄やチェックに入ってしまう）
 for (const control of [el.mode, el.half, el.crop, el.tone, el.seek]) {
@@ -827,11 +971,358 @@ el.auto.addEventListener('click', () => {
   else startAuto();
 });
 
+// ---------------------------------------------------------------- しおり・書き込みを保存する
+
+let notesTimer = 0;
+
+function saveNotesNow() {
+  if (!notesTimer) return;
+  clearTimeout(notesTimer);
+  notesTimer = 0;
+  const { meta } = state;
+  if (meta && meta.id != null) store.saveNotes(meta.id, state.notes).catch(() => {});
+}
+
+// 変えたら、少し待ってから保存する（本棚に入っていない PDF は、開いている間だけ覚える）
+function notesChanged() {
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(saveNotesNow, NOTES_SAVE_MS);
+}
+
+window.addEventListener('pagehide', saveNotesNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveNotesNow();
+});
+
+// ---------------------------------------------------------------- しおり
+
+function shelfRow(title, sub, data, level = 0) {
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = level ? `btn shelf-item level-${Math.min(level, 2)}` : 'btn shelf-item';
+  Object.assign(open.dataset, data);
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = title;
+  const small = document.createElement('span');
+  small.className = 'sub';
+  small.textContent = sub;
+  open.append(name, small);
+  return open;
+}
+
+function hintRow(text) {
+  const li = document.createElement('li');
+  li.className = 'hint';
+  li.textContent = text;
+  return li;
+}
+
+// PDF に入っている目次を読む（[{ title, page, level }]。無ければ空）
+async function readOutline(doc) {
+  const out = [];
+  const walk = async (items, level) => {
+    for (const item of items ?? []) {
+      if (out.length >= 300) return;
+      try {
+        const dest = typeof item.dest === 'string' ? await doc.getDestination(item.dest) : item.dest;
+        const target = Array.isArray(dest) ? dest[0] : null;
+        const index = target && typeof target === 'object' ? await doc.getPageIndex(target) : target;
+        if (Number.isInteger(index)) out.push({ title: String(item.title ?? '').trim() || `${index + 1} ページ目`, page: index + 1, level });
+      } catch {
+        // 行き先の分からない項目は、出さない
+      }
+      if (level < 2) await walk(item.items, level + 1);
+    }
+  };
+  try {
+    await walk(await doc.getOutline(), 0);
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+function renderMarks() {
+  const rows = state.notes.marks.map((mark) => {
+    const li = document.createElement('li');
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'btn sub shelf-del';
+    del.dataset.delMark = String(mark.page);
+    del.textContent = '消す';
+    li.append(shelfRow(mark.name, `${mark.page} ページ目`, { page: String(mark.page) }), del);
+    return li;
+  });
+  if (!rows.length) rows.push(hintRow('まだありません。名前を入れて「いまのページに付ける」を押すと、ここに並びます（押すと、そのページへ飛びます）。'));
+  el.marksList.replaceChildren(...rows);
+  el.markAdd.textContent = `いまのページ（${state.pos.page}）に付ける`;
+}
+
+function renderOutline() {
+  const items = state.outline ?? [];
+  el.outlineTitle.hidden = !items.length;
+  el.outlineList.replaceChildren(...items.map((item) => {
+    const li = document.createElement('li');
+    li.append(shelfRow(item.title, `${item.page} ページ目`, { page: String(item.page) }, item.level));
+    return li;
+  }));
+}
+
+function setMarksOpen(open) {
+  el.marks.hidden = !open;
+  if (!open || !state.doc) return;
+  renderMarks();
+  renderOutline();
+  if (state.outline === null) {
+    const doc = state.doc;
+    readOutline(doc).then((items) => {
+      if (state.doc !== doc) return;
+      state.outline = items;
+      renderOutline();
+    });
+  }
+}
+
+function addMark() {
+  if (!state.doc) return;
+  state.notes.marks = withMark(state.notes.marks, state.pos.page, el.markName.value);
+  el.markName.value = '';
+  notesChanged();
+  renderMarks();
+}
+
+el.marksOpen.addEventListener('click', () => setMarksOpen(true));
+el.marksClose.addEventListener('click', () => setMarksOpen(false));
+el.marks.addEventListener('click', (e) => {
+  if (e.target === el.marks) setMarksOpen(false);
+});
+el.markAdd.addEventListener('click', addMark);
+el.markName.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addMark();
+});
+el.marks.addEventListener('click', (e) => {
+  const jump = e.target.closest('[data-page]');
+  const del = e.target.closest('[data-del-mark]');
+  if (jump) {
+    setMarksOpen(false);
+    goTo(Number(jump.dataset.page));
+  } else if (del) {
+    const page = Number(del.dataset.delMark);
+    state.notes.marks = state.notes.marks.filter((m) => m.page !== page);
+    notesChanged();
+    renderMarks();
+  }
+});
+
+// ---------------------------------------------------------------- 書き込み
+
+function setTool(tool) {
+  settings.tool = tool;
+  for (const button of el.inkTools) button.setAttribute('aria-pressed', String(button.dataset.tool === tool));
+}
+
+function setInkMode(on) {
+  state.inkMode = on;
+  el.ink.setAttribute('aria-pressed', String(on));
+  el.ink.textContent = on ? '書き込みを終える' : '書き込み';
+  el.inkRow.hidden = !on;
+  document.body.classList.toggle('inking', on);
+  if (on) {
+    stopAuto();
+    setBarHidden(false); // 書き込み中は、操作の欄を出したままにする（めくるボタンと道具を使うため）
+  }
+  el.hide.disabled = on || !state.doc;
+  applyTouch();
+}
+
+function pushUndo(op) {
+  state.undo.push(op);
+  if (state.undo.length > 100) state.undo.shift();
+  el.inkUndo.disabled = false;
+  notesChanged();
+}
+
+function strokesOf(n) {
+  state.notes.ink[n] ??= [];
+  return state.notes.ink[n];
+}
+
+function undoInk() {
+  const op = state.undo.pop();
+  el.inkUndo.disabled = !state.undo.length;
+  if (!op) return;
+  if (op.type === 'add') {
+    const list = strokesOf(op.n);
+    const at = list.indexOf(op.stroke);
+    if (at >= 0) list.splice(at, 1);
+  } else if (op.type === 'remove') {
+    const list = strokesOf(op.n);
+    for (const item of [...op.items].reverse()) list.splice(Math.min(item.index, list.length), 0, item.stroke);
+  } else if (op.type === 'clear') {
+    for (const [n, list] of op.pages) state.notes.ink[n] = list;
+  }
+  notesChanged();
+  repaintInk();
+}
+
+// いま出ているページの書き込みを、全部消す（「元に戻す」で戻せる）
+function clearInk() {
+  if (!state.doc) return;
+  const pages = visiblePages(state.pos, state.layout, state.count)
+    .filter((n) => (state.notes.ink[n] ?? []).length)
+    .map((n) => [n, state.notes.ink[n]]);
+  if (!pages.length) return;
+  for (const [n] of pages) delete state.notes.ink[n];
+  pushUndo({ type: 'clear', pages });
+  repaintInk();
+}
+
+el.ink.addEventListener('click', () => setInkMode(!state.inkMode));
+for (const button of el.inkTools) {
+  button.addEventListener('click', () => {
+    setTool(button.dataset.tool);
+    saveSettings();
+  });
+}
+el.inkUndo.addEventListener('click', undoInk);
+el.inkClear.addEventListener('click', clearInk);
+setTool(settings.tool);
+
+let drawing = null; // 書いている途中（{ id, sheet, stroke } か、消しゴムなら { id, sheet, removed }）
+let inkFrame = 0;
+
+function inkPoint(sheet, e) {
+  const rect = sheet.getBoundingClientRect();
+  return toPage((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, sheet.inkInfo.crop);
+}
+
+function eraseAt(x, y) {
+  const { sheet, removed } = drawing;
+  const list = strokesOf(sheet.inkInfo.n);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (hitStroke(list[i], x, y, sheet.inkInfo.aspect, ERASER_REACH)) removed.push({ index: i, stroke: list.splice(i, 1)[0] });
+  }
+}
+
+function inkMove(e) {
+  const [x, y] = inkPoint(drawing.sheet, e);
+  if (drawing.removed) eraseAt(x, y);
+  else addPoint(drawing.stroke.p, x, y);
+}
+
+function paintLive() {
+  if (inkFrame || !drawing) return;
+  inkFrame = requestAnimationFrame(() => {
+    inkFrame = 0;
+    if (drawing) paintInk(drawing.sheet, drawing.stroke ?? null);
+  });
+}
+
+el.stage.addEventListener('pointerdown', (e) => {
+  if (!state.inkMode || !state.doc || drawing || e.button > 0) return;
+  const sheet = e.target instanceof Element ? e.target.closest('.sheet') : null;
+  if (!sheet || !sheet.inkInfo) return;
+  e.preventDefault();
+  drawing = settings.tool === ERASER ? { id: e.pointerId, sheet, removed: [] } : { id: e.pointerId, sheet, stroke: { t: settings.tool, p: [] } };
+  inkMove(e);
+  try {
+    el.stage.setPointerCapture(e.pointerId);
+  } catch {
+    // つかめなくても、紙の上では書ける
+  }
+  paintInk(sheet, drawing.stroke ?? null);
+});
+el.stage.addEventListener('pointermove', (e) => {
+  if (!drawing || e.pointerId !== drawing.id) return;
+  const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+  for (const one of events.length ? events : [e]) inkMove(one);
+  paintLive();
+});
+
+function endInk(e) {
+  if (!drawing || e.pointerId !== drawing.id) return;
+  const { sheet, stroke, removed } = drawing;
+  drawing = null;
+  const n = sheet.inkInfo.n;
+  if (stroke && stroke.p.length >= 2) {
+    strokesOf(n).push(stroke);
+    pushUndo({ type: 'add', n, stroke });
+  } else if (removed && removed.length) {
+    pushUndo({ type: 'remove', n, items: removed });
+  }
+  repaintInk([n]);
+}
+
+el.stage.addEventListener('pointerup', endInk);
+el.stage.addEventListener('pointercancel', endInk);
+
+// ---------------------------------------------------------------- メトロノーム
+
+let beatTimer = 0;
+
+const metronome = createMetronome((beat) => {
+  el.beatDot.classList.add('on');
+  el.beatDot.classList.toggle('first', beat === 0);
+  el.pager.classList.add('beat');
+  clearTimeout(beatTimer);
+  beatTimer = setTimeout(() => {
+    el.beatDot.classList.remove('on', 'first');
+    el.pager.classList.remove('beat');
+  }, 90);
+});
+
+function setMetronome(on) {
+  if (on) {
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback'; // iPad の消音モードでも鳴るように（Safari 16.4 以降）
+    } catch {
+      // 対応していない端末では何もしない
+    }
+    metronome.set(settings.bpm, settings.beats);
+    try {
+      metronome.start();
+    } catch {
+      showError('この端末では、メトロノームを鳴らせません');
+      return;
+    }
+  } else {
+    metronome.stop();
+  }
+  el.metro.setAttribute('aria-pressed', String(metronome.running));
+  el.metro.textContent = metronome.running ? 'メトロノームを止める' : 'メトロノーム';
+}
+
+function setBpm(value) {
+  settings.bpm = clampBpm(value, settings.bpm);
+  el.bpm.value = String(settings.bpm);
+  metronome.set(settings.bpm, settings.beats);
+  saveSettings();
+}
+
+el.metro.addEventListener('click', () => {
+  el.metro.blur();
+  setMetronome(!metronome.running);
+});
+el.bpm.addEventListener('change', () => {
+  setBpm(el.bpm.value);
+  el.bpm.blur();
+});
+el.bpmDown.addEventListener('click', () => setBpm(settings.bpm - 4));
+el.bpmUp.addEventListener('click', () => setBpm(settings.bpm + 4));
+el.beats.addEventListener('change', () => {
+  settings.beats = Number(el.beats.value);
+  metronome.set(settings.bpm, settings.beats);
+  saveSettings();
+  el.beats.blur();
+});
+
 // タップ：右＝次・左＝前・真ん中＝操作の欄を出す／かくす。左右にはらっても、めくれる
 let pointerStart = null;
 let swiped = false;
 
 el.stage.addEventListener('pointerdown', (e) => {
+  if (state.inkMode) return; // 書き込み中は、タップやはらう動きで、めくらない
   pointerStart = { x: e.clientX, y: e.clientY };
   swiped = false;
 });
@@ -855,7 +1346,7 @@ el.stage.addEventListener('click', (e) => {
     swiped = false;
     return;
   }
-  if (!state.doc) return;
+  if (!state.doc || state.inkMode) return;
   const rect = el.stage.getBoundingClientRect();
   const zone = zoneAt(e.clientX - rect.left, rect.width);
   if (zone !== 'menu') {
@@ -872,7 +1363,7 @@ const NEXT_KEYS = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'];
 const PREV_KEYS = ['ArrowLeft', 'ArrowUp', 'PageUp'];
 
 document.addEventListener('keydown', (e) => {
-  if (!state.doc || !el.shelf.hidden || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (!state.doc || panelOpen() || e.altKey || e.ctrlKey || e.metaKey) return;
   const tag = e.target instanceof Element ? e.target.tagName : '';
   if (tag === 'SELECT' || tag === 'TEXTAREA' || (tag === 'INPUT' && e.target.type !== 'checkbox')) return;
   if ((e.key === ' ' || e.key === 'Enter') && (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT')) return;

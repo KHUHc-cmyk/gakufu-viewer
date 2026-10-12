@@ -1,0 +1,98 @@
+// PDF の楽譜のページ：書き込み・しおり・メトロノームの計算（src/pdf-ink.js）
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { makePdf } from './fixtures/make-pdf.js';
+import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm } from '../src/pdf-ink.js';
+
+const FULL = { l: 0, t: 0, r: 1, b: 1 };
+const CUT = { l: 0.2, t: 0.1, r: 0.8, b: 0.9 };
+
+test('書き込みの位置：紙の全体に対する割合で持つ。余白カットで切っていても、同じ所を指す', () => {
+  assert.deepEqual(toPage(0.5, 0.5, FULL), [0.5, 0.5]);
+  assert.deepEqual(toPage(0, 0, CUT), [0.2, 0.1]);
+  assert.deepEqual(toPage(1, 1, CUT), [0.8, 0.9]);
+  assert.deepEqual(toPage(0.5, 0.25, CUT), [0.5, 0.3]);
+  // 紙の外にはみ出した指は、端に寄せる
+  assert.deepEqual(toPage(-0.2, 1.4, CUT), [0.2, 0.9]);
+  // 逆向き：切った後の画面で、どこに出るか
+  const [fx, fy] = fromPage(0.5, 0.3, CUT);
+  assert.ok(Math.abs(fx - 0.5) < 1e-9 && Math.abs(fy - 0.25) < 1e-9);
+  assert.ok(fromPage(0.1, 0.5, CUT)[0] < 0, '切れた所は、0〜1 の外になる');
+});
+
+test('線に点を足す：近すぎる点は足さず、上限を越えない', () => {
+  const p = [];
+  assert.equal(addPoint(p, 0.1, 0.1), true);
+  assert.equal(addPoint(p, 0.1001, 0.1001), false);
+  assert.equal(addPoint(p, 0.12, 0.1), true);
+  assert.deepEqual(p, [0.1, 0.1, 0.12, 0.1]);
+  const many = [];
+  for (let i = 0; i < 5000; i++) addPoint(many, (i % 2) * 0.5, i / 5000);
+  assert.equal(many.length, 8000);
+});
+
+test('消しゴム：線に触れたかどうか（線の途中・端・1点だけの線）', () => {
+  const line = { t: 'black', p: [0.2, 0.5, 0.6, 0.5] };
+  assert.equal(hitStroke(line, 0.4, 0.505, 1.4, 0.012), true); // 途中
+  assert.equal(hitStroke(line, 0.4, 0.53, 1.4, 0.012), false); // 離れている（たては 1.4 倍して比べる）
+  assert.equal(hitStroke(line, 0.61, 0.5, 1.4, 0.012), true); // 端のすぐ外
+  assert.equal(hitStroke(line, 0.7, 0.5, 1.4, 0.012), false);
+  const dot = { t: 'red', p: [0.3, 0.3] };
+  assert.equal(hitStroke(dot, 0.305, 0.3, 1.4, 0.012), true);
+  assert.equal(hitStroke(dot, 0.4, 0.3, 1.4, 0.012), false);
+  // 蛍光ペンは太いので、少し離れていても触れる
+  assert.equal(hitStroke({ t: 'marker', p: [0.2, 0.5, 0.6, 0.5] }, 0.4, 0.515, 1.4, 0.012), true);
+  assert.equal(hitStroke({ t: '知らない道具', p: [0.2, 0.5] }, 0.2, 0.5, 1.4, 0.012), false);
+});
+
+test('道具：黒・赤・青・蛍光ペン。消しゴムは、線の道具ではない', () => {
+  assert.deepEqual(Object.keys(TOOLS), ['black', 'red', 'blue', 'marker']);
+  assert.equal(TOOLS[ERASER], undefined);
+  assert.ok(TOOLS.marker.alpha < 1 && TOOLS.marker.width > TOOLS.black.width);
+});
+
+test('しおり：名前が空なら「◯ ページ目」。同じページには1つ。ページの順に並ぶ', () => {
+  assert.equal(markName('  サビ  ', 3), 'サビ');
+  assert.equal(markName('', 3), '3 ページ目');
+  assert.equal(markName('あ'.repeat(60), 1).length, 40);
+  let marks = [];
+  marks = withMark(marks, 5, 'サビ');
+  marks = withMark(marks, 2, '');
+  marks = withMark(marks, 5, '大サビ');
+  assert.deepEqual(marks, [{ page: 2, name: '2 ページ目' }, { page: 5, name: '大サビ' }]);
+});
+
+test('保存してあった覚えを読む：おかしな中身は捨て、ページの数を越えるものも捨てる', () => {
+  assert.deepEqual(cleanNotes(null), emptyNotes());
+  assert.deepEqual(cleanNotes('こわれた'), emptyNotes());
+  const notes = cleanNotes({
+    marks: [{ page: 3, name: 'サビ' }, { page: 99, name: '無いページ' }, { page: 1.5 }, null, { page: 1, name: '' }],
+    ink: {
+      2: [{ t: 'red', p: [0.1, 0.2, 0.3, 0.4] }, { t: '知らない', p: [0, 0] }, { t: 'black', p: [0.5] }, { t: 'blue', p: [2, -1] }],
+      99: [{ t: 'black', p: [0.1, 0.1] }],
+      abc: [{ t: 'black', p: [0.1, 0.1] }],
+      4: 'こわれた',
+    },
+  }, 5);
+  assert.deepEqual(notes.marks, [{ page: 1, name: '1 ページ目' }, { page: 3, name: 'サビ' }]);
+  assert.deepEqual(notes.ink, { 2: [{ t: 'red', p: [0.1, 0.2, 0.3, 0.4] }, { t: 'blue', p: [1, 0] }] });
+});
+
+test('メトロノームの速さ：40〜240 に収める。数でないものは、前の値のまま', () => {
+  assert.equal(clampBpm(100), 100);
+  assert.equal(clampBpm('132'), 132);
+  assert.equal(clampBpm(10), 40);
+  assert.equal(clampBpm(999), 240);
+  assert.equal(clampBpm('', 96), 96);
+  assert.equal(clampBpm('あ', 96), 96);
+  assert.equal(clampBpm(undefined), 100);
+});
+
+test('pdf.js：試験用の PDF の目次が読める', async () => {
+  const pdfjs = await import('../vendor/pdfjs/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(makePdf(4, { outline: [['Intro', 1], ['Song Two', 3]] })), verbosity: 0 }).promise;
+  const outline = await doc.getOutline();
+  assert.deepEqual(outline.map((o) => o.title), ['Intro', 'Song Two']);
+  assert.equal(await doc.getPageIndex(outline[1].dest[0]), 2);
+  await doc.loadingTask.destroy();
+});

@@ -21,6 +21,8 @@ iPad の Safari で楽譜を見るための静的な Web アプリ。ページ�
 - 画面の文はすべて日本語
 - 部品は alphaTab 1.8.4 と pdf.js 6.3.289（`vendor/pdfjs/`。legacy 版）。フォント・音源・ワーカーはリポジトリに同梱する（外の配信元に頼らない）
 - PDF のページ：本人の PDF は、端末のブラウザの中（本棚＝IndexedDB）に保存するだけ。リポジトリにも外にも出さない。試験用の PDF は、テストがその場で作る（`test/fixtures/make-pdf.js`）。本物の楽譜の PDF をリポジトリに入れない
+- Actions の結果は、公開の API で読む（`gh` は無い。ログはサインインが要る）：`https://api.github.com/repos/KHUHc-cmyk/gakufu-viewer/actions/runs?per_page=1` → `/actions/runs/番号/jobs` → `/check-runs/ジョブの番号/annotations`（落ちたテストの名前とわけは、注記に出る）。公開ページの実物は `node local/check-live.mjs` で確かめる
+- 画面のテストでは、ページのスクリプトが動き終わるのを待ってから確かめる（題名は先に付くので、印にならない）。操作の欄の高さが変わると楽譜を描き直すので、座標で押す前に、描き終わるのを待つ（`#stage` の `data-drawn`）
 - 手元のブラウザの枠（Browser pane）がかくれている間は、PDF を開く所で止まって見えることがある。確かめは画面のテスト（`npm run test:ui`）で行う
 - **作るのはローカル（この PC）**（2026-10-05 にクラウドセッションから移した）。画面のテストを走らせるときは、最初に `npm install` と `npx playwright install chromium` が要る
 - クレジット：クラウドセッションはもう使わない。使った記録は、PC の `local/クレジットの記録.md` に残してある（公開しない。`local/` は git に入れない）。「追加の使用量」はオフのまま、さわらない

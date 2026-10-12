@@ -15,6 +15,8 @@ const ASSETS = [
   './src/style.css',
   './pdf.html',
   './src/pdf-app.js',
+  './src/pdf-ink.js',
+  './src/pdf-metronome.js',
   './src/pdf-layout.js',
   './src/pdf-store.js',
   './src/pdf.css',

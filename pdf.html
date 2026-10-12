@@ -17,6 +17,7 @@
       <input id="file" type="file" accept=".pdf,application/pdf" multiple>
     </label>
     <button id="shelf-open" type="button" class="btn">本棚</button>
+    <button id="marks-open" type="button" class="btn" disabled>しおり</button>
     <a id="to-mxml" class="btn sub" href="./" hidden>MusicXML の楽譜へ</a>
     <a id="alone" class="btn sub" href="pdf.html" target="_blank" rel="noopener" hidden>別のタブで大きく開く</a>
     <span id="title" class="title"></span>
@@ -27,7 +28,8 @@
     <button id="next" type="button" class="btn primary" disabled>次へ</button>
     <input id="seek" class="seek" type="range" min="1" max="1" step="1" value="1" aria-label="ページ" disabled>
     <span id="position" class="position"></span>
-    <button id="hide" type="button" class="btn sub fold">かくす</button>
+    <button id="fold" type="button" class="btn sub fold" aria-expanded="true" aria-controls="toolbar">たたむ</button>
+    <button id="hide" type="button" class="btn sub">かくす</button>
   </div>
   <div class="row">
     <label class="group">表示
@@ -48,6 +50,36 @@
       </select>
     </label>
   </div>
+  <div class="row" id="tools-row">
+    <button id="ink" type="button" class="btn" aria-pressed="false" disabled>書き込み</button>
+    <button id="metro" type="button" class="btn" aria-pressed="false">メトロノーム</button>
+    <div class="group">
+      <button id="bpm-down" type="button" class="btn sub" aria-label="メトロノームを遅くする">−</button>
+      <label class="group num"><input id="bpm" type="number" min="40" max="240" step="1" value="100" inputmode="numeric" aria-label="メトロノームの速さ（1分間の拍の数）"></label>
+      <button id="bpm-up" type="button" class="btn sub" aria-label="メトロノームを速くする">＋</button>
+    </div>
+    <label class="group">拍子
+      <select id="beats">
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4" selected>4</option>
+        <option value="6">6</option>
+      </select>
+    </label>
+    <span id="beat-dot" class="beat-dot" aria-hidden="true"></span>
+  </div>
+  <div class="row" id="ink-row" hidden>
+    <span class="ink-tools" role="group" aria-label="書き込みの道具">
+      <button type="button" class="btn sub ink-tool" data-tool="black" aria-pressed="true">黒</button>
+      <button type="button" class="btn sub ink-tool" data-tool="red" aria-pressed="false">赤</button>
+      <button type="button" class="btn sub ink-tool" data-tool="blue" aria-pressed="false">青</button>
+      <button type="button" class="btn sub ink-tool" data-tool="marker" aria-pressed="false">蛍光ペン</button>
+      <button type="button" class="btn sub ink-tool" data-tool="eraser" aria-pressed="false">消しゴム</button>
+    </span>
+    <button id="ink-undo" type="button" class="btn sub" disabled>元に戻す</button>
+    <button id="ink-clear" type="button" class="btn sub">このページを消す</button>
+    <span class="ink-hint">書き込み中は「前へ」「次へ」でめくります</span>
+  </div>
   <div class="row" id="auto-row" hidden>
     <button id="auto" type="button" class="btn" aria-pressed="false">自動スクロール</button>
     <div class="group tempo">
@@ -62,8 +94,9 @@
     <p class="lead">「ファイルを選ぶ」で、PDF の楽譜を開いてください</p>
     <ul>
       <li>画面の右をタップ＝次のページ／左をタップ＝前のページ（左右にはらっても、めくれます）</li>
-      <li>真ん中をタップ＝操作の欄を出す／かくす</li>
+      <li>真ん中をタップ＝操作の欄を出す／かくす（「たたむ」は、めくる行だけを残します）</li>
       <li>キーボードとペダルは ← → ・PageUp／PageDown・スペース</li>
+      <li>「しおり」＝ページに名前を付けて飛ぶ／「書き込み」＝ペン・蛍光ペン・消しゴム／メトロノーム</li>
       <li>開いた PDF は「本棚」に残り、次からは前回のページから開きます<span id="offline"></span></li>
     </ul>
   </div>
@@ -77,6 +110,21 @@
     </div>
     <p id="shelf-note" class="hint"></p>
     <ul id="shelf-list" class="shelf-list"></ul>
+  </div>
+</section>
+<section id="marks" class="shelf" hidden aria-label="しおり">
+  <div class="shelf-box">
+    <div class="row">
+      <strong class="shelf-title">しおり</strong>
+      <button id="marks-close" type="button" class="btn sub fold">とじる</button>
+    </div>
+    <div class="row marks-add">
+      <input id="mark-name" type="text" maxlength="40" placeholder="名前（例：サビ・2曲目）" aria-label="しおりの名前">
+      <button id="mark-add" type="button" class="btn primary">いまのページに付ける</button>
+    </div>
+    <ul id="marks-list" class="shelf-list"></ul>
+    <p id="outline-title" class="hint" hidden>PDF の目次</p>
+    <ul id="outline-list" class="shelf-list"></ul>
   </div>
 </section>
 <script type="module" src="src/pdf-app.js"></script>
