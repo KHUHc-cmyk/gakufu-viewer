@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePdf } from './fixtures/make-pdf.js';
-import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm } from '../src/pdf-ink.js';
+import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, turned, unturned } from '../src/pdf-ink.js';
 
 const FULL = { l: 0, t: 0, r: 1, b: 1 };
 const CUT = { l: 0.2, t: 0.1, r: 0.8, b: 0.9 };
@@ -18,6 +18,43 @@ test('書き込みの位置：紙の全体に対する割合で持つ。余白�
   const [fx, fy] = fromPage(0.5, 0.3, CUT);
   assert.ok(Math.abs(fx - 0.5) < 1e-9 && Math.abs(fy - 0.25) < 1e-9);
   assert.ok(fromPage(0.1, 0.5, CUT)[0] < 0, '切れた所は、0〜1 の外になる');
+});
+
+test('紙の向き：右へ 90 度ずつ回り、4回で元に戻る。おかしな値は、回していないものとする', () => {
+  assert.deepEqual([0, 90, 180, 270].map(nextTurn), [90, 180, 270, 0]);
+  assert.deepEqual([undefined, null, 45, -90, 360, '90', 'x'].map(cleanTurn), [0, 0, 0, 0, 0, 90, 0]);
+  assert.equal(nextTurn(undefined), 90);
+});
+
+test('紙の向き：もとの紙の左上は、右へ回すと 右上 → 右下 → 左下 に来る。逆向きで元に戻る', () => {
+  assert.deepEqual(turned(0, 0, 0), [0, 0]);
+  assert.deepEqual(turned(0, 0, 90), [1, 0]);
+  assert.deepEqual(turned(0, 0, 180), [1, 1]);
+  assert.deepEqual(turned(0, 0, 270), [0, 1]);
+  // もとの紙の上の辺のまんなかは、右へ回すと 右の辺のまんなか
+  assert.deepEqual(turned(0.5, 0, 90), [1, 0.5]);
+  for (const turn of [0, 90, 180, 270]) {
+    const [u, v] = turned(0.2, 0.7, turn);
+    const [x, y] = unturned(u, v, turn);
+    assert.ok(Math.abs(x - 0.2) < 1e-9 && Math.abs(y - 0.7) < 1e-9, `${turn} 度`);
+  }
+});
+
+test('書き込みの位置：紙を回していても、もとの紙の同じ所を指す（余白カットは、回した紙の上で測る）', () => {
+  // 右へ 90 度：もとの紙の左上は、画面の右上に来ている
+  assert.deepEqual(toPage(1, 0, FULL, 90), [0, 0]);
+  assert.deepEqual(toPage(0.8, 0.275, FULL, 90), [0.275, 0.2]);
+  assert.deepEqual(toPage(0.5, 0.5, FULL, 180), [0.5, 0.5]);
+  assert.deepEqual(toPage(0.25, 0.1, FULL, 180), [0.75, 0.9]);
+  assert.deepEqual(toPage(0.3, 0.9, FULL, 270), [0.1, 0.3]);
+  // 向きを省くと、回していないもの（前からの呼び方のまま）
+  assert.deepEqual(toPage(0.5, 0.25, CUT), toPage(0.5, 0.25, CUT, 0));
+  // 行って戻る
+  for (const turn of [0, 90, 180, 270]) {
+    const [x, y] = toPage(0.3, 0.6, CUT, turn);
+    const [fx, fy] = fromPage(x, y, CUT, turn);
+    assert.ok(Math.abs(fx - 0.3) < 1e-3 && Math.abs(fy - 0.6) < 1e-3, `${turn} 度（${fx}, ${fy}）`);
+  }
 });
 
 test('線に点を足す：近すぎる点は足さず、上限を越えない', () => {

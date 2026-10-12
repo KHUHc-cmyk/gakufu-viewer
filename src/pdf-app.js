@@ -2,7 +2,7 @@
 import * as pdfjs from '../vendor/pdfjs/pdf.mjs';
 import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, findCrop, zoneAt, looksLikePdf, titleOf } from './pdf-layout.js';
 import * as store from './pdf-store.js';
-import { TOOLS, ERASER, toPage, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm } from './pdf-ink.js';
+import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn } from './pdf-ink.js';
 import { createMetronome } from './pdf-metronome.js';
 import { findInShelf } from './pdf-shelf.js';
 import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate } from './pdf-setlist.js';
@@ -57,6 +57,7 @@ const el = {
   mode: $('mode'),
   half: $('half'),
   crop: $('crop'),
+  turn: $('turn'),
   tone: $('tone'),
   autoRow: $('auto-row'),
   auto: $('auto'),
@@ -155,7 +156,8 @@ const state = {
   gen: 0, // 描き直しの番号（古い描き直しの結果を捨てるため）
   openToken: 0,
   bases: new Map(), // ページ番号 → ページと大きさ
-  crops: new Map(), // ページ番号 → 余白カットの範囲
+  crops: new Map(), // ページ番号 → 余白カットの範囲（回した紙の上で測る）
+  turn: 0, // 紙の向き（0・90・180・270。時計回り。PDF ごとに本棚に覚える）
   canvases: new Map(), // 鍵 → 描いたキャンバス
   slots: [], // 縦スクロールの、ページごとの枠
   scrollWidth: 0,
@@ -224,9 +226,12 @@ document.addEventListener('visibilitychange', holdWakeLock);
 function basePage(n) {
   let base = state.bases.get(n);
   if (!base) {
+    const { turn } = state;
     base = state.doc.getPage(n).then((page) => {
-      const view = page.getViewport({ scale: 1 });
-      return { page, w: view.width, h: view.height };
+      // rotation を渡すと、PDF に書いてある向きの代わりになる。もとの向きに、回した分を足す
+      const rotation = (page.rotate + turn) % 360;
+      const view = page.getViewport({ scale: 1, rotation });
+      return { page, w: view.width, h: view.height, rotation };
     });
     state.bases.set(n, base);
   }
@@ -238,8 +243,8 @@ function cropOf(n) {
   if (!settings.crop) return Promise.resolve(FULL);
   let crop = state.crops.get(n);
   if (!crop) {
-    crop = basePage(n).then(async ({ page, w, h }) => {
-      const viewport = page.getViewport({ scale: CROP_SIDE / Math.max(w, h) });
+    crop = basePage(n).then(async ({ page, w, h, rotation }) => {
+      const viewport = page.getViewport({ scale: CROP_SIDE / Math.max(w, h), rotation });
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(viewport.width));
       canvas.height = Math.max(1, Math.round(viewport.height));
@@ -267,7 +272,7 @@ async function shape(n) {
 
 // ページ n を、画面の w × h の大きさで描いたキャンバス。同じものは使い回す
 function getCanvas(n, w, h) {
-  const key = `${n}:${w}x${h}:${settings.crop ? 'cut' : 'full'}`;
+  const key = `${n}:${w}x${h}:${settings.crop ? 'cut' : 'full'}:${state.turn}`;
   let entry = state.canvases.get(key);
   if (entry) return entry;
   const canvas = document.createElement('canvas');
@@ -278,7 +283,7 @@ function getCanvas(n, w, h) {
     canvas.width = Math.max(1, Math.round(w * ratio));
     canvas.height = Math.max(1, Math.round(h * ratio));
     const scale = canvas.width / (s.w * (s.crop.r - s.crop.l));
-    const viewport = s.page.getViewport({ scale, offsetX: -s.crop.l * s.w * scale, offsetY: -s.crop.t * s.h * scale });
+    const viewport = s.page.getViewport({ scale, rotation: s.rotation, offsetX: -s.crop.l * s.w * scale, offsetY: -s.crop.t * s.h * scale });
     entry.task = s.page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport, background: '#ffffff' });
     return entry.task.promise.then(() => true);
   }).catch(() => false); // 取り消したとき・描けなかったときは false
@@ -316,6 +321,7 @@ function sheetFor(n, w, h, canvas = null) {
 function attachInk(sheet) {
   const n = Number(sheet.dataset.page);
   const gen = state.gen;
+  const { turn } = state;
   shape(n).then((s) => {
     if (gen !== state.gen || !sheet.isConnected) return;
     const w = sheet.clientWidth;
@@ -327,7 +333,8 @@ function attachInk(sheet) {
     canvas.width = Math.max(1, Math.round(w * ratio));
     canvas.height = Math.max(1, Math.round(h * ratio));
     if (sheet.inkInfo) sheet.inkInfo.canvas.remove();
-    sheet.inkInfo = { n, canvas, crop: s.crop, aspect: s.h / s.w };
+    // aspect は、もとの紙の 高さ ÷ 幅（横に倒した向きでは、画面の幅と高さが入れ替わる）
+    sheet.inkInfo = { n, canvas, crop: s.crop, turn, aspect: turn % 180 ? s.w / s.h : s.h / s.w };
     sheet.append(canvas);
     paintInk(sheet);
   }).catch(() => {});
@@ -337,11 +344,15 @@ function attachInk(sheet) {
 function paintInk(sheet, live = null) {
   const info = sheet.inkInfo;
   if (!info) return;
-  const { canvas, crop } = info;
+  const { canvas, crop, turn } = info;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const scaleX = canvas.width / (crop.r - crop.l); // 紙の幅 1 あたりの画素
-  const scaleY = canvas.height / (crop.b - crop.t);
+  // もとの紙の幅 1 あたりの画素（線の太さの物差し。横に倒した向きでは、画面の高さの側になる）
+  const unit = turn % 180 ? canvas.height / (crop.b - crop.t) : canvas.width / (crop.r - crop.l);
+  const at = (x, y) => {
+    const [fx, fy] = fromPage(x, y, crop, turn);
+    return [fx * canvas.width, fy * canvas.height];
+  };
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const strokes = state.notes.ink[info.n] ?? [];
@@ -351,11 +362,12 @@ function paintInk(sheet, live = null) {
     const p = stroke.p;
     ctx.globalAlpha = tool.alpha;
     ctx.strokeStyle = tool.color;
-    ctx.lineWidth = Math.max(1, tool.width * scaleX);
+    ctx.lineWidth = Math.max(1, tool.width * unit);
     ctx.beginPath();
-    ctx.moveTo((p[0] - crop.l) * scaleX, (p[1] - crop.t) * scaleY);
-    if (p.length === 2) ctx.lineTo((p[0] - crop.l) * scaleX + 0.01, (p[1] - crop.t) * scaleY);
-    for (let i = 2; i < p.length; i += 2) ctx.lineTo((p[i] - crop.l) * scaleX, (p[i + 1] - crop.t) * scaleY);
+    const [x0, y0] = at(p[0], p[1]);
+    ctx.moveTo(x0, y0);
+    if (p.length === 2) ctx.lineTo(x0 + 0.01, y0);
+    for (let i = 2; i < p.length; i += 2) ctx.lineTo(...at(p[i], p[i + 1]));
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -737,6 +749,7 @@ function closeDocument() {
   dropAllCanvases();
   state.bases.clear();
   state.crops.clear();
+  state.turn = 0;
   if (state.doc) state.doc.loadingTask.destroy().catch(() => {});
   state.doc = null;
   state.meta = null;
@@ -750,6 +763,7 @@ function setControls(on) {
   el.hide.disabled = !on;
   el.marksOpen.disabled = !on;
   el.ink.disabled = !on;
+  el.turn.disabled = !on;
   if (!on) {
     el.prev.disabled = true;
     el.next.disabled = true;
@@ -802,6 +816,7 @@ async function openDocument(meta, bytes, { start = null, playing = null } = {}) 
   state.meta = meta;
   state.count = doc.numPages;
   state.notes = cleanNotes(notes, state.count);
+  state.turn = cleanTurn(meta.turn);
   const noted = (meta.id != null ? notedPage(meta) : null) ?? meta.lastPage ?? 1;
   state.pos = { page: start === 'last' ? state.count : start ?? noted, half: false };
   el.empty.hidden = true;
@@ -1008,6 +1023,21 @@ el.half.addEventListener('change', () => {
 el.crop.addEventListener('change', () => {
   settings.crop = el.crop.checked;
   saveSettings();
+  relayout();
+});
+// 右に回す：横倒しの PDF を直す。全部のページを 90 度ずつ回し、向きは PDF ごとに本棚に覚える
+el.turn.addEventListener('click', () => {
+  el.turn.blur();
+  if (!state.doc) return;
+  state.turn = nextTurn(state.turn);
+  const { meta } = state;
+  meta.turn = state.turn;
+  if (meta.id != null) store.update(meta.id, { turn: state.turn }).catch(() => {});
+  // 紙の形と余白カットの範囲は、向きで変わる。調べ直して、描き直す
+  state.gen += 1;
+  dropAllCanvases();
+  state.bases.clear();
+  state.crops.clear();
   relayout();
 });
 el.tone.addEventListener('change', () => {
@@ -1476,7 +1506,7 @@ let inkFrame = 0;
 
 function inkPoint(sheet, e) {
   const rect = sheet.getBoundingClientRect();
-  return toPage((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, sheet.inkInfo.crop);
+  return toPage((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, sheet.inkInfo.crop, sheet.inkInfo.turn);
 }
 
 function eraseAt(x, y) {

@@ -1,5 +1,6 @@
 // PDF の楽譜への書き込み（ペン・蛍光ペン・消しゴム）と、しおりの計算（画面にはさわらない。Node のテストからも読む）。
 // 線の位置は、紙の全体に対する割合（0〜1）で持つ。余白カットや画面の大きさが変わっても、紙の同じ所に出る。
+// 紙を回していても（turn：0・90・180・270。時計回り）、線の位置は、回す前の紙（PDF のもとの向き）に対する割合で持つ。
 // 線：{ t: 道具の名前, p: [x0, y0, x1, y1, …] }
 
 // 太さ（width）は、紙の幅に対する割合
@@ -24,14 +25,40 @@ export function round4(v) {
   return Math.round(v * 10000) / 10000;
 }
 
-// 画面に出ている紙の中の割合（fx, fy）→ 紙の全体に対する割合。crop は、余白カットの範囲
-export function toPage(fx, fy, crop) {
-  return [round4(crop.l + clamp01(fx) * (crop.r - crop.l)), round4(crop.t + clamp01(fy) * (crop.b - crop.t))];
+// 紙の向き。決まった4つのほかは、回していないものとする
+export function cleanTurn(value) {
+  const n = Number(value);
+  return n === 90 || n === 180 || n === 270 ? n : 0;
 }
 
-// 紙の全体に対する割合 → 画面に出ている紙の中の割合（余白カットで切れた所は、0〜1 の外になる）
-export function fromPage(x, y, crop) {
-  return [(x - crop.l) / (crop.r - crop.l), (y - crop.t) / (crop.b - crop.t)];
+// 右へ 90 度回した、次の向き
+export function nextTurn(turn) {
+  return (cleanTurn(turn) + 90) % 360;
+}
+
+// もとの紙の中の割合 → 回した紙の中の割合
+export function turned(x, y, turn) {
+  if (turn === 90) return [1 - y, x];
+  if (turn === 180) return [1 - x, 1 - y];
+  if (turn === 270) return [y, 1 - x];
+  return [x, y];
+}
+
+// 回した紙の中の割合 → もとの紙の中の割合
+export function unturned(x, y, turn) {
+  return turned(x, y, (360 - cleanTurn(turn)) % 360);
+}
+
+// 画面に出ている紙の中の割合（fx, fy）→ もとの紙の全体に対する割合。crop は、余白カットの範囲（回した紙の上で測ったもの）
+export function toPage(fx, fy, crop, turn = 0) {
+  const [x, y] = unturned(crop.l + clamp01(fx) * (crop.r - crop.l), crop.t + clamp01(fy) * (crop.b - crop.t), turn);
+  return [round4(x), round4(y)];
+}
+
+// もとの紙の全体に対する割合 → 画面に出ている紙の中の割合（余白カットで切れた所は、0〜1 の外になる）
+export function fromPage(x, y, crop, turn = 0) {
+  const [u, v] = turned(x, y, turn);
+  return [(u - crop.l) / (crop.r - crop.l), (v - crop.t) / (crop.b - crop.t)];
 }
 
 // 線に点を足す。前の点に近すぎるとき・点が多すぎるときは足さない（足したら true）

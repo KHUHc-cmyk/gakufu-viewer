@@ -7,8 +7,9 @@ const NL = String.fromCharCode(10);
  * margin：紙の端から、中身（枠の線）までの余白。大きくすると、余白カットで大きく切れる。
  * sizes：ページごとの紙の大きさ [[幅, 高さ], …]（足りない分は width × height）
  * outline：PDF の目次 [[題（英数字だけ）, ページ番号], …]
+ * rotate：PDF に書いておく紙の向き（0・90・180・270。スキャンした PDF によくある）
  */
-export function makePdf(count, { width = 595, height = 842, margin = 120, sizes = [], outline = [] } = {}) {
+export function makePdf(count, { width = 595, height = 842, margin = 120, sizes = [], outline = [], rotate = 0 } = {}) {
   const objects = [];
   const add = (body) => objects.push(body);
   add('<< /Type /Catalog /Pages 2 0 R >>');
@@ -27,7 +28,7 @@ export function makePdf(count, { width = 595, height = 842, margin = 120, sizes 
     const stream = lines.join(NL);
     kids.push(`${objects.length + 1} 0 R`);
     pageIds.push(objects.length + 1);
-    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`);
+    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}]${rotate ? ` /Rotate ${rotate}` : ''} /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`);
     add(`<< /Length ${Buffer.byteLength(stream)} >>${NL}stream${NL}${stream}${NL}endstream`);
   }
   objects[1] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${count} >>`;
