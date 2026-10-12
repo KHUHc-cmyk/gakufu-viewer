@@ -3,13 +3,16 @@
 // meta：{ id, name, size, pages, lastPage, added, opened }／data：{ id, bytes（ArrayBuffer） }
 // しおりと書き込みは、別のデータベースに置く（notes：{ id, marks, ink }。id は本棚と同じ）。
 // 本棚のデータベースの版を上げないため（版を上げると、前の版のページが開いている間、開けなくなる）。
+// セットリスト（本番の曲順）も、同じわけで別のデータベースに置く（sets：{ id, name, items, made }。items は本棚の番号の並び）。
 
 const SHELF = { name: 'gakufu-viewer-pdf', version: 1, stores: [['meta', { keyPath: 'id', autoIncrement: true }], ['data', { keyPath: 'id' }]] };
 const NOTES = { name: 'gakufu-viewer-pdf-notes', version: 1, stores: [['notes', { keyPath: 'id' }]] };
+const SETS = { name: 'gakufu-viewer-pdf-sets', version: 1, stores: [['sets', { keyPath: 'id', autoIncrement: true }]] };
 
 const opened = new Map(); // データベースの名前 → 開いたもの（Promise）
 let memory = null; // 本棚を保存できないときの代わり（{ meta: Map, data: Map, next }）
 let notesMemory = null; // しおりと書き込みを保存できないときの代わり（id → { marks, ink }）
+let setsMemory = null; // セットリストを保存できないときの代わり（{ rows: Map, next }）
 
 function wrap(request) {
   return new Promise((resolve, reject) => {
@@ -46,18 +49,24 @@ function openDb(spec) {
   return promise;
 }
 
-// 開けないときは null（そのときは、ページを開いている間だけ覚える）。
-// 本棚が開けないときは、しおりと書き込みも保存しない（本棚の番号が、開き直すたびに変わるため）
+// spec のデータベースが開けないときの代わりを用意する。
+// 本棚が開けないときは、しおり・書き込み・セットリストも保存しない（本棚の番号が、開き直すたびに変わるため）
+function useMemory(spec) {
+  if (spec === SHELF) memory ??= { meta: new Map(), data: new Map(), next: 1 };
+  if (spec !== SETS) notesMemory ??= new Map();
+  if (spec !== NOTES) setsMemory ??= { rows: new Map(), next: 1 };
+}
+
+// 開けないときは null（そのときは、ページを開いている間だけ覚える）
 async function db(spec = SHELF) {
-  if (memory || (spec === NOTES && notesMemory)) {
-    notesMemory ??= new Map();
+  if (memory || (spec === NOTES && notesMemory) || (spec === SETS && setsMemory)) {
+    useMemory(memory ? SHELF : spec);
     return null;
   }
   try {
     return await openDb(spec);
   } catch {
-    if (spec === SHELF) memory = { meta: new Map(), data: new Map(), next: 1 };
-    notesMemory ??= new Map();
+    useMemory(spec);
     return null;
   }
 }
@@ -140,25 +149,62 @@ export async function saveNotes(id, notes) {
   await done(tx);
 }
 
-// 本棚から消す（この端末の中の写しと、そのしおり・書き込み。もとのファイルは消えない）
+// セットリストの一覧。中身は、使う側で決まった形に直す（pdf-setlist.js の cleanSets）
+export async function sets() {
+  const d = await db(SETS);
+  if (!d) return [...setsMemory.rows.values()].map((row) => ({ ...row, items: [...row.items] }));
+  return wrap(d.transaction('sets').objectStore('sets').getAll());
+}
+
+// セットリストを書く（id が無ければ、新しく作る）。書いたものを返す
+export async function saveSet(set) {
+  const row = { name: set.name, items: [...set.items], made: set.made ?? Date.now() };
+  if (set.id != null) row.id = set.id;
+  const d = await db(SETS);
+  if (!d) {
+    row.id ??= setsMemory.next++;
+    setsMemory.rows.set(row.id, { ...row, items: [...row.items] });
+    return row;
+  }
+  const tx = d.transaction('sets', 'readwrite');
+  row.id = await wrap(tx.objectStore('sets').put(row));
+  await done(tx);
+  return row;
+}
+
+// セットリストを消す（PDF は本棚に残る）
+export async function removeSet(id) {
+  const d = await db(SETS);
+  if (!d) {
+    setsMemory.rows.delete(id);
+    return;
+  }
+  const tx = d.transaction('sets', 'readwrite');
+  tx.objectStore('sets').delete(id);
+  await done(tx);
+}
+
+// 本棚から消す（この端末の中の写しと、そのしおり・書き込み。セットリストからも外す。もとのファイルは消えない）
 export async function remove(id) {
   const d = await db();
   if (!d) {
     memory.meta.delete(id);
     memory.data.delete(id);
-    notesMemory.delete(id);
-    return;
+  } else {
+    const tx = d.transaction(['meta', 'data'], 'readwrite');
+    tx.objectStore('meta').delete(id);
+    tx.objectStore('data').delete(id);
+    await done(tx);
   }
-  const tx = d.transaction(['meta', 'data'], 'readwrite');
-  tx.objectStore('meta').delete(id);
-  tx.objectStore('data').delete(id);
-  await done(tx);
   const n = await db(NOTES);
   if (!n) {
     notesMemory.delete(id);
-    return;
+  } else {
+    const ntx = n.transaction('notes', 'readwrite');
+    ntx.objectStore('notes').delete(id);
+    await done(ntx);
   }
-  const ntx = n.transaction('notes', 'readwrite');
-  ntx.objectStore('notes').delete(id);
-  await done(ntx);
+  for (const set of await sets()) {
+    if (set.items.includes(id)) await saveSet({ ...set, items: set.items.filter((item) => item !== id) });
+  }
 }

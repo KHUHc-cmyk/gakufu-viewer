@@ -18,6 +18,7 @@
     </label>
     <button id="shelf-open" type="button" class="btn">本棚</button>
     <button id="marks-open" type="button" class="btn" disabled>しおり</button>
+    <button id="sets-open" type="button" class="btn">セットリスト</button>
     <a id="to-mxml" class="btn sub" href="./" hidden>MusicXML の楽譜へ</a>
     <a id="alone" class="btn sub" href="pdf.html" target="_blank" rel="noopener" hidden>別のタブで大きく開く</a>
     <span id="title" class="title"></span>
@@ -97,6 +98,7 @@
       <li>真ん中をタップ＝操作の欄を出す／かくす（「たたむ」は、めくる行だけを残します）</li>
       <li>キーボードとペダルは ← → ・PageUp／PageDown・スペース</li>
       <li>「しおり」＝ページに名前を付けて飛ぶ／「書き込み」＝ペン・蛍光ペン・消しゴム／メトロノーム</li>
+      <li>「セットリスト」＝本番の曲順に PDF を並べる（最後のページで「次へ」を押すと、次の曲へ移ります）</li>
       <li>開いた PDF は「本棚」に残り、次からは前回のページから開きます<span id="offline"></span></li>
     </ul>
   </div>
@@ -125,6 +127,25 @@
     <ul id="marks-list" class="shelf-list"></ul>
     <p id="outline-title" class="hint" hidden>PDF の目次</p>
     <ul id="outline-list" class="shelf-list"></ul>
+  </div>
+</section>
+<section id="sets" class="shelf" hidden aria-label="セットリスト">
+  <div class="shelf-box">
+    <div class="row">
+      <button id="sets-back" type="button" class="btn sub" hidden>一覧へ</button>
+      <strong id="sets-title" class="shelf-title">セットリスト</strong>
+      <button id="sets-close" type="button" class="btn sub fold">とじる</button>
+    </div>
+    <p id="sets-note" class="hint"></p>
+    <div id="sets-new" class="row marks-add">
+      <input id="set-name" type="text" maxlength="40" placeholder="名前（例：10月のライブ）" aria-label="セットリストの名前">
+      <button id="set-add" type="button" class="btn primary">作る</button>
+    </div>
+    <ul id="sets-list" class="shelf-list"></ul>
+    <div id="set-songs" class="row marks-add" hidden>
+      <select id="set-song" aria-label="足す曲（本棚から）"></select>
+      <button id="set-song-add" type="button" class="btn primary">足す</button>
+    </div>
   </div>
 </section>
 <script type="module" src="src/pdf-app.js"></script>
