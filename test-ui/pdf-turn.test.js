@@ -310,3 +310,120 @@ test('右に回す：PDF に向きが書いてあるもの（スキャンに多�
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+/** ページ n の紙の 幅 ÷ 高さ が want になるまで待つ */
+function waitSheetRatio(page, n, ratio, slack = 0.03) {
+  return page.waitForFunction(([num, want, by]) => {
+    const r = document.querySelector(`#stage .sheet[data-page="${num}"]`)?.getBoundingClientRect();
+    return r && r.height > 0 && Math.abs(r.width / r.height - want) < by;
+  }, [n, ratio, slack]);
+}
+
+function turnsOf(page) {
+  return page.evaluate(() => JSON.stringify(window.__pdf.state.turns));
+}
+
+test('このページだけ回す：そのページだけが回り、ほかは回らない。PDF ごとに覚え、「右に回す」と重なる', async () => {
+  const context = await browser.newContext({ viewport: { width: 820, height: 1180 } });
+  try {
+    const { page, errors } = await openPdf({ context });
+    assert.ok(await page.isEnabled('#turn-page'));
+    await page.click('#next');
+    await waitShown(page, [2]);
+    await page.click('#turn-page');
+    await waitRatio(page, WIDE);
+    await waitTurned(page, 2, 90);
+    assert.equal(await turnsOf(page), '{"2":90}');
+    assert.equal(await turnOf(page), 0);
+    assert.match(await page.textContent('#status'), /2 ページだけ/);
+    // 押した後は、ボタンから離れる（ペダルのスペースで、もう一度回ってしまわないように）
+    assert.notEqual(await page.evaluate(() => document.activeElement?.id), 'turn-page');
+    // となりのページは、もとの向きのまま
+    await page.click('#next');
+    await waitShown(page, [3]);
+    await waitRatio(page, TALL);
+    await waitTurned(page, 3, 0);
+    await page.click('#prev');
+    await waitShown(page, [2]);
+    await waitTurned(page, 2, 90);
+
+    // 開き直しても残る
+    await page.waitForTimeout(600);
+    await page.reload();
+    await waitShown(page, [2]);
+    await waitTurned(page, 2, 90);
+    assert.equal(await turnsOf(page), '{"2":90}');
+
+    // 「右に回す」は全部のページを回し、このページの分は、その上に足す
+    await page.click('#turn');
+    await waitRatio(page, TALL);
+    await waitTurned(page, 2, 180);
+    await page.click('#prev');
+    await waitShown(page, [1]);
+    await waitTurned(page, 1, 90);
+
+    // 縦スクロールでも、ページごとの向きで出る
+    await page.selectOption('#mode', 'scroll');
+    await page.waitForFunction(() => document.querySelectorAll('#stage .column .sheet').length === 5);
+    await waitSheetRatio(page, 1, WIDE);
+    await waitSheetRatio(page, 2, TALL);
+    await page.selectOption('#mode', 'auto');
+    await waitShown(page, [1]);
+    await page.click('#turn');
+    await page.click('#turn');
+    await page.click('#turn');
+    await waitTurned(page, 1, 0);
+
+    // 3回押すと（4回で1周）、ほかのページと同じ向きに戻り、覚えからも消える
+    await page.click('#next');
+    await waitShown(page, [2]);
+    await waitTurned(page, 2, 90);
+    for (const turn of [180, 270, 0]) {
+      await page.click('#turn-page');
+      await waitTurned(page, 2, turn);
+    }
+    assert.equal(await turnsOf(page), '{}');
+    assert.match(await page.textContent('#status'), /同じに戻しました/);
+
+    // ほかの PDF は回らない
+    await page.click('#turn-page');
+    await waitTurned(page, 2, 90);
+    await page.setInputFiles('#file', [BOOK]);
+    await page.waitForFunction(() => document.getElementById('title').textContent === 'book');
+    await waitShown(page, [1]);
+    assert.equal(await turnsOf(page), '{}');
+    await page.click('#next');
+    await waitShown(page, [2]);
+    await waitTurned(page, 2, 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('このページだけ回す：書き込みは、そのページの紙といっしょに回る', async () => {
+  const { page, errors } = await openPdf();
+  await page.click('#next');
+  await waitShown(page, [2]);
+  await page.click('#turn-page');
+  await waitRatio(page, WIDE);
+  await waitTurned(page, 2, 90);
+  // 回した紙の右上（もとの紙の左上）に書く
+  await page.click('#ink');
+  await draw(page, 2, [[0.78, 0.25], [0.78, 0.3]]);
+  await page.waitForFunction(() => window.__pdf.state.notes.ink[2]?.length === 1);
+  const p = await page.evaluate(() => window.__pdf.state.notes.ink[2][0].p);
+  assert.ok(p[0] < 0.35 && p[1] < 0.3, `もとの紙の左上で覚える（${p.slice(0, 2)}）`);
+  await page.click('#ink');
+  // 元の向きに戻すと、線は もとの紙の左上に出る
+  for (const turn of [180, 270, 0]) {
+    await page.click('#turn-page');
+    await waitTurned(page, 2, turn);
+  }
+  await waitRatio(page, TALL);
+  await waitInk(page, 2, 10);
+  const back = await inkStats(page, 2);
+  assert.ok(back.cx < 0.35 && back.cy < 0.3, `戻した後の位置（${JSON.stringify(back)}）`);
+  assert.deepEqual(errors, []);
+  await page.close();
+});

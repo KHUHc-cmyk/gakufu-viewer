@@ -2,7 +2,7 @@
 import * as pdfjs from '../vendor/pdfjs/pdf.mjs';
 import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, findCrop, zoneAt, looksLikePdf, titleOf } from './pdf-layout.js';
 import * as store from './pdf-store.js';
-import { TOOLS, ERASER, toPage, drawStrokes, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn } from './pdf-ink.js';
+import { TOOLS, ERASER, toPage, drawStrokes, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt } from './pdf-ink.js';
 import { createMetronome } from './pdf-metronome.js';
 import { buildPdf, exportName, exportPixels } from './pdf-export.js';
 import { findInShelf } from './pdf-shelf.js';
@@ -66,6 +66,7 @@ const el = {
   half: $('half'),
   crop: $('crop'),
   turn: $('turn'),
+  turnPage: $('turn-page'),
   tone: $('tone'),
   autoRow: $('auto-row'),
   auto: $('auto'),
@@ -172,6 +173,7 @@ const state = {
   bases: new Map(), // ページ番号 → ページと大きさ
   crops: new Map(), // ページ番号 → 余白カットの範囲（回した紙の上で測る）
   turn: 0, // 紙の向き（0・90・180・270。時計回り。PDF ごとに本棚に覚える）
+  turns: {}, // ページごとの向き（ページ番号 → 全部の向きに足す分。PDF ごとに本棚に覚える）
   canvases: new Map(), // 鍵 → 描いたキャンバス
   slots: [], // 縦スクロールの、ページごとの枠
   scrollWidth: 0,
@@ -242,12 +244,12 @@ document.addEventListener('visibilitychange', holdWakeLock);
 function basePage(n) {
   let base = state.bases.get(n);
   if (!base) {
-    const { turn } = state;
+    const turn = turnAt(state.turn, state.turns, n);
     base = state.doc.getPage(n).then((page) => {
       // rotation を渡すと、PDF に書いてある向きの代わりになる。もとの向きに、回した分を足す
       const rotation = (page.rotate + turn) % 360;
       const view = page.getViewport({ scale: 1, rotation });
-      return { page, w: view.width, h: view.height, rotation };
+      return { page, w: view.width, h: view.height, rotation, turn };
     });
     state.bases.set(n, base);
   }
@@ -288,7 +290,7 @@ async function shape(n) {
 
 // ページ n を、画面の w × h の大きさで描いたキャンバス。同じものは使い回す
 function getCanvas(n, w, h) {
-  const key = `${n}:${w}x${h}:${settings.crop ? 'cut' : 'full'}:${state.turn}`;
+  const key = `${n}:${w}x${h}:${settings.crop ? 'cut' : 'full'}:${turnAt(state.turn, state.turns, n)}`;
   let entry = state.canvases.get(key);
   if (entry) return entry;
   const canvas = document.createElement('canvas');
@@ -337,8 +339,8 @@ function sheetFor(n, w, h, canvas = null) {
 function attachInk(sheet) {
   const n = Number(sheet.dataset.page);
   const gen = state.gen;
-  const { turn } = state;
   shape(n).then((s) => {
+    const { turn } = s;
     if (gen !== state.gen || !sheet.isConnected) return;
     const w = sheet.clientWidth;
     const h = sheet.clientHeight;
@@ -747,6 +749,7 @@ function closeDocument() {
   state.bases.clear();
   state.crops.clear();
   state.turn = 0;
+  state.turns = {};
   if (state.doc) state.doc.loadingTask.destroy().catch(() => {});
   state.doc = null;
   state.meta = null;
@@ -761,6 +764,7 @@ function setControls(on) {
   el.marksOpen.disabled = !on;
   el.ink.disabled = !on;
   el.turn.disabled = !on;
+  el.turnPage.disabled = !on;
   if (!on) {
     el.prev.disabled = true;
     el.next.disabled = true;
@@ -814,6 +818,7 @@ async function openDocument(meta, bytes, { start = null, playing = null } = {}) 
   state.count = doc.numPages;
   state.notes = cleanNotes(notes, state.count);
   state.turn = cleanTurn(meta.turn);
+  state.turns = cleanTurns(meta.turns, doc.numPages);
   const noted = (meta.id != null ? notedPage(meta) : null) ?? meta.lastPage ?? 1;
   state.pos = { page: start === 'last' ? state.count : start ?? noted, half: false };
   el.empty.hidden = true;
@@ -1036,6 +1041,28 @@ el.turn.addEventListener('click', () => {
   dropAllCanvases();
   state.bases.clear();
   state.crops.clear();
+  relayout();
+});
+// このページだけ回す：曲集の中の横向きのページなど。全部の向きに足す分を、ページごとに本棚に覚える（見開きでは左のページ）
+el.turnPage.addEventListener('click', () => {
+  el.turnPage.blur();
+  if (!state.doc) return;
+  const n = state.pos.page;
+  const turn = nextTurn(state.turns[n]);
+  const turns = { ...state.turns };
+  if (turn) turns[n] = turn;
+  else delete turns[n];
+  state.turns = turns;
+  const { meta } = state;
+  meta.turns = turns;
+  if (meta.id != null) store.update(meta.id, { turns }).catch(() => {});
+  setStatus(turn ? `${n} ページだけを右に ${turn} 度回しています` : `${n} ページの向きを、ほかのページと同じに戻しました`);
+  // そのページの形と余白カットの範囲だけを調べ直して、描き直す
+  state.gen += 1;
+  dropExport();
+  dropAllCanvases(new Set([...state.canvases.keys()].filter((key) => !key.startsWith(`${n}:`))));
+  state.bases.delete(n);
+  state.crops.delete(n);
   relayout();
 });
 el.tone.addEventListener('change', () => {
@@ -1721,7 +1748,7 @@ async function exportPdf() {
   state.exported = null;
   el.exportSave.hidden = true;
   el.exportPdf.disabled = true;
-  const { doc, count, turn } = state; // 閉じた・回したときは、dropExport で取り消す
+  const { doc, count } = state; // 閉じた・回したときは、dropExport で取り消す
   const title = titleOf(state.meta.name);
   const pages = [];
   const canvas = document.createElement('canvas');
@@ -1729,7 +1756,7 @@ async function exportPdf() {
     for (let n = 1; n <= count; n++) {
       if (exporting !== job || doc !== state.doc) return;
       setStatus(`書き込みつきの PDF を作っています… ${n} / ${count} ページ`);
-      const { page, w, h, rotation } = await basePage(n);
+      const { page, w, h, rotation, turn } = await basePage(n);
       const size = exportPixels(w, h, EXPORT_SIDE);
       canvas.width = size.w;
       canvas.height = size.h;

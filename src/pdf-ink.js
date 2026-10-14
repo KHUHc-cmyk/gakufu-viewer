@@ -36,6 +36,23 @@ export function nextTurn(turn) {
   return (cleanTurn(turn) + 90) % 360;
 }
 
+// ページごとの向き（{ ページ番号: 90・180・270 }。全部のページの向きに足す分）。回していないページ・ページの数を越えるものは持たない
+export function cleanTurns(value, count) {
+  const out = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [key, turn] of Object.entries(value)) {
+    const n = Number(key);
+    const t = cleanTurn(turn);
+    if (Number.isInteger(n) && n >= 1 && n <= count && t) out[n] = t;
+  }
+  return out;
+}
+
+// ページ n の向き：全部のページの向き（turn）に、そのページだけの分（turns）を足す
+export function turnAt(turn, turns, n) {
+  return (cleanTurn(turn) + cleanTurn(turns?.[n])) % 360;
+}
+
 // もとの紙の中の割合 → 回した紙の中の割合
 export function turned(x, y, turn) {
   if (turn === 90) return [1 - y, x];

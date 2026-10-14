@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePdf } from './fixtures/make-pdf.js';
-import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, turned, unturned } from '../src/pdf-ink.js';
+import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt, turned, unturned } from '../src/pdf-ink.js';
 
 const FULL = { l: 0, t: 0, r: 1, b: 1 };
 const CUT = { l: 0.2, t: 0.1, r: 0.8, b: 0.9 };
@@ -24,6 +24,15 @@ test('紙の向き：右へ 90 度ずつ回り、4回で元に戻る。おかし
   assert.deepEqual([0, 90, 180, 270].map(nextTurn), [90, 180, 270, 0]);
   assert.deepEqual([undefined, null, 45, -90, 360, '90', 'x'].map(cleanTurn), [0, 0, 0, 0, 0, 90, 0]);
   assert.equal(nextTurn(undefined), 90);
+});
+
+test('ページごとの向き：全部のページの向きに足す。おかしな中身・回していないページ・ページの数を越えるものは捨てる', () => {
+  assert.deepEqual(cleanTurns({ 1: 90, 2: 0, 3: '180', 4: 45, 6: 270, x: 90, 0: 90, 2.5: 90 }, 5), { 1: 90, 3: 180 });
+  assert.deepEqual([undefined, null, [90], 'x', 3].map((v) => cleanTurns(v, 5)), [{}, {}, {}, {}, {}]);
+  const turns = { 2: 90, 3: 270 };
+  assert.deepEqual([1, 2, 3].map((n) => turnAt(0, turns, n)), [0, 90, 270]);
+  assert.deepEqual([1, 2, 3].map((n) => turnAt(180, turns, n)), [180, 270, 90]);
+  assert.equal(turnAt(90, undefined, 1), 90);
 });
 
 test('紙の向き：もとの紙の左上は、右へ回すと 右上 → 右下 → 左下 に来る。逆向きで元に戻る', () => {
