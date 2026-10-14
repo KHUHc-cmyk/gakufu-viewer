@@ -80,7 +80,8 @@
     </span>
     <button id="ink-undo" type="button" class="btn sub" disabled>元に戻す</button>
     <button id="ink-clear" type="button" class="btn sub">このページを消す</button>
-    <span class="ink-hint">書き込み中は「前へ」「次へ」でめくります</span>
+    <label class="group toggle"><input id="pen-only" type="checkbox"> ペンだけで書く</label>
+    <span id="ink-hint" class="ink-hint">書き込み中は「前へ」「次へ」でめくります</span>
   </div>
   <div class="row" id="auto-row" hidden>
     <button id="auto" type="button" class="btn" aria-pressed="false">自動スクロール</button>

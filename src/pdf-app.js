@@ -37,6 +37,8 @@ const el = {
   inkTools: [...document.querySelectorAll('.ink-tool')],
   inkUndo: $('ink-undo'),
   inkClear: $('ink-clear'),
+  penOnly: $('pen-only'),
+  inkHint: $('ink-hint'),
   metro: $('metro'),
   bpm: $('bpm'),
   bpmDown: $('bpm-down'),
@@ -94,6 +96,8 @@ const SCROLL_MAX_WIDTH = 1200; // 縦スクロールの、ページの幅の上�
 const SCROLL_PAD = 8;
 const SPEED_STEP = 6; // 自動スクロール：速さ 1 あたりの、1秒に進む画素
 const SWIPE_MIN = 40;
+const TAP_MAX = 400; // ペンだけで書くとき、指のタップとみなす長さ（ミリ秒）。手のひらを置いたままの時は、めくらない
+const PEN_REST = 600; // ペンを離してから、これだけの間は、指でめくらない（書いている手のひらでめくらないように）
 const INK_MAX_PIXELS = 3000000; // 書き込みを描くキャンバスの、画素の上限
 const ERASER_REACH = 0.012; // 消しゴムの大きさ（紙の幅に対する割合）
 const NOTES_SAVE_MS = 600; // 書き込み・しおりを、変えてから保存するまでの間
@@ -101,7 +105,7 @@ const NOTES_SAVE_MS = 600; // 書き込み・しおりを、変えてから保�
 // ---------------------------------------------------------------- 設定を覚える（この端末の中だけ）
 
 const SETTINGS_KEY = 'gakufu-viewer:pdf-settings';
-const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4, tool: 'black', bpm: 100, beats: 4, folded: false, shelfOrder: 'opened' };
+const settings = { mode: 'auto', half: false, crop: false, tone: 'plain', speed: 4, tool: 'black', bpm: 100, beats: 4, folded: false, shelfOrder: 'opened', penOnly: false, penSeen: false };
 
 function hasOption(select, value) {
   return [...select.options].some((o) => o.value === value);
@@ -141,6 +145,8 @@ function saveSettings() {
   el.beats.value = String(settings.beats);
   if (hasOption(el.shelfOrder, saved.shelfOrder)) settings.shelfOrder = saved.shelfOrder;
   el.shelfOrder.value = settings.shelfOrder;
+  settings.penOnly = saved.penOnly === true;
+  settings.penSeen = saved.penSeen === true;
   // せまい画面（スマホ）では、はじめは たたんでおく（操作の欄が、画面の半分を越えるため）
   settings.folded = typeof saved.folded === 'boolean' ? saved.folded : window.innerWidth < 600;
 }
@@ -713,8 +719,9 @@ function goTo(page) {
 function applyTouch() {
   // 1ページ・見開きでは、左右にはらう動きをこのページで受け取る（広げて見ているときは、ブラウザに任せて動かせるようにする）
   const zoomed = (window.visualViewport?.scale ?? 1) > 1.01;
-  // 書き込み中は、指やペンの動きを全部このページで受け取る（めくるのは「前へ」「次へ」）
-  el.stage.style.touchAction = state.inkMode ? 'none' : state.layout === 'scroll' ? 'pan-y pinch-zoom' : zoomed ? 'auto' : 'pinch-zoom';
+  // 書き込み中は、指やペンの動きを全部このページで受け取る（めくるのは「前へ」「次へ」）。
+  // 「ペンだけで書く」のときは、指はふだんどおり（ペンで画面が動かないようにするのは、touchstart の所）
+  el.stage.style.touchAction = state.inkMode && !settings.penOnly ? 'none' : state.layout === 'scroll' ? 'pan-y pinch-zoom' : zoomed ? 'auto' : 'pinch-zoom';
 }
 
 // 表示の形を決め直して、描き直す（開いたとき・設定を変えたとき・画面の大きさが変わったとき）
@@ -1448,6 +1455,38 @@ function setInkMode(on) {
   applyTouch();
 }
 
+// 「ペンだけで書く」：Apple Pencil で書き、指ではめくる・動かす
+function setPenOnly(on) {
+  settings.penOnly = on;
+  el.penOnly.checked = on;
+  document.body.classList.toggle('pen-only', on);
+  el.inkHint.textContent = on ? 'ペンで書きます。指のタップ・はらう動きで、めくれます' : '書き込み中は「前へ」「次へ」でめくります';
+  applyTouch();
+}
+
+// この指（またはペン・マウス）の動きで、書くかどうか
+function writes(e) {
+  return state.inkMode && (!settings.penOnly || e.pointerType === 'pen');
+}
+
+el.penOnly.addEventListener('change', () => {
+  settings.penSeen = true; // 自分で切り替えたら、あとは自動で入れない
+  setPenOnly(el.penOnly.checked);
+  saveSettings();
+  el.penOnly.blur();
+});
+setPenOnly(settings.penOnly);
+
+// ペンで画面が動かないようにする（縦スクロール・広げて見ているとき。iPad の Safari は、Apple Pencil を touchType 'stylus' で知らせる）
+function stylusIn(list) {
+  return [...list].some((t) => t.touchType === 'stylus');
+}
+for (const type of ['touchstart', 'touchmove']) {
+  el.stage.addEventListener(type, (e) => {
+    if (state.inkMode && settings.penOnly && stylusIn(e.changedTouches)) e.preventDefault();
+  }, { passive: false });
+}
+
 function pushUndo(op) {
   state.undo.push(op);
   if (state.undo.length > 100) state.undo.shift();
@@ -1503,6 +1542,7 @@ setTool(settings.tool);
 
 let drawing = null; // 書いている途中（{ id, sheet, stroke } か、消しゴムなら { id, sheet, removed }）
 let inkFrame = 0;
+let penAt = -Infinity; // 最後にペンが触れていた時刻（手のひらでめくらないように）
 
 function inkPoint(sheet, e) {
   const rect = sheet.getBoundingClientRect();
@@ -1532,7 +1572,14 @@ function paintLive() {
 }
 
 el.stage.addEventListener('pointerdown', (e) => {
-  if (!state.inkMode || !state.doc || drawing || e.button > 0) return;
+  if (e.pointerType === 'pen') penAt = performance.now();
+  // はじめて Apple Pencil で書いたら、「ペンだけで書く」にする（指でめくれるように）。自分で切り替えた後は、入れない
+  if (state.inkMode && e.pointerType === 'pen' && !settings.penOnly && !settings.penSeen) {
+    settings.penSeen = true;
+    setPenOnly(true);
+    saveSettings();
+  }
+  if (!writes(e) || !state.doc || drawing || e.button > 0) return;
   const sheet = e.target instanceof Element ? e.target.closest('.sheet') : null;
   if (!sheet || !sheet.inkInfo) return;
   e.preventDefault();
@@ -1553,6 +1600,7 @@ el.stage.addEventListener('pointermove', (e) => {
 });
 
 function endInk(e) {
+  if (e.pointerType === 'pen') penAt = performance.now();
   if (!drawing || e.pointerId !== drawing.id) return;
   const { sheet, stroke, removed } = drawing;
   drawing = null;
@@ -1630,18 +1678,31 @@ el.beats.addEventListener('change', () => {
 });
 
 // タップ：右＝次・左＝前・真ん中＝操作の欄を出す／かくす。左右にはらっても、めくれる
+// 書き込み中は、書く動きでは、めくらない（「ペンだけで書く」のときは、指でめくれる）
 let pointerStart = null;
 let swiped = false;
+let inkTap = false; // 書き込み中に、指でめくってよいタップだったか
+
+// ペンで書いている途中か、離したすぐ後か（このときの指は、手のひらとみなす）
+function penBusy() {
+  return Boolean(drawing) || performance.now() - penAt < PEN_REST;
+}
 
 el.stage.addEventListener('pointerdown', (e) => {
-  if (state.inkMode) return; // 書き込み中は、タップやはらう動きで、めくらない
-  pointerStart = { x: e.clientX, y: e.clientY };
+  inkTap = false;
+  if (writes(e) || (state.inkMode && penBusy())) {
+    pointerStart = null;
+    return;
+  }
+  pointerStart = { x: e.clientX, y: e.clientY, t: performance.now() };
   swiped = false;
 });
 el.stage.addEventListener('pointerup', (e) => {
   const start = pointerStart;
   pointerStart = null;
+  if (start && state.inkMode) inkTap = performance.now() - start.t < TAP_MAX && !penBusy();
   if (!start || !state.doc || state.layout === 'scroll') return;
+  if (state.inkMode && penBusy()) return;
   if ((window.visualViewport?.scale ?? 1) > 1.01) return; // 広げて見ているときは、めくらない
   const dx = e.clientX - start.x;
   const dy = e.clientY - start.y;
@@ -1658,9 +1719,12 @@ el.stage.addEventListener('click', (e) => {
     swiped = false;
     return;
   }
-  if (!state.doc || state.inkMode) return;
+  if (!state.doc) return;
+  if (state.inkMode && !inkTap) return;
+  inkTap = false;
   const rect = el.stage.getBoundingClientRect();
   const zone = zoneAt(e.clientX - rect.left, rect.width);
+  if (zone === 'menu' && state.inkMode) return; // 書き込み中は、操作の欄を出したまま
   if (zone !== 'menu') {
     go(zone === 'next' ? 1 : -1);
   } else if (state.auto) {

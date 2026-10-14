@@ -80,5 +80,5 @@ body.pdf .bar { max-height: 60dvh; overflow-y: auto; }
 .shelf-list .set-move { flex: 0 0 auto; min-height: 52px; min-width: 44px; padding: 0 8px; }
 .shelf-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #stage { -webkit-touch-callout: none; }
-/* 書き込み中は、紙の上の指やペンの動きで、画面を動かさない（縦スクロールでも） */
-body.inking #stage .sheet, body.inking #stage canvas { touch-action: none; }
+/* 書き込み中は、紙の上の指やペンの動きで、画面を動かさない（縦スクロールでも）。「ペンだけで書く」のときは、指で動かせる */
+body.inking:not(.pen-only) #stage .sheet, body.inking:not(.pen-only) #stage canvas { touch-action: none; }
