@@ -137,7 +137,7 @@ export async function notesOf(id) {
   const d = await db(NOTES);
   if (!d) return notesMemory.get(id) ?? null;
   const row = await wrap(d.transaction('notes').objectStore('notes').get(id));
-  return row ? { marks: row.marks, ink: row.ink } : null;
+  return row ? { marks: row.marks, ink: row.ink, links: row.links } : null;
 }
 
 export async function saveNotes(id, notes) {
@@ -147,7 +147,7 @@ export async function saveNotes(id, notes) {
     return;
   }
   const tx = d.transaction('notes', 'readwrite');
-  tx.objectStore('notes').put({ id, marks: notes.marks, ink: notes.ink });
+  tx.objectStore('notes').put({ id, marks: notes.marks, ink: notes.ink, links: notes.links ?? {} });
   await done(tx);
 }
 

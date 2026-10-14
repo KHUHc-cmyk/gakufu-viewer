@@ -63,6 +63,20 @@ body.pdf .group select { flex: 0 0 auto; min-height: 40px; font-size: 15px; }
 .ink-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .ink-hint { color: var(--muted); font-size: 13px; }
 .sheet canvas.ink { position: absolute; inset: 0; pointer-events: none; }
+/* とび先の印：押すと、そのページへ飛ぶ。書き込み中は押せない（紙の上をなぞれるように） */
+.jumps { position: absolute; inset: 0; pointer-events: none; }
+.jump {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: auto;
+  min-width: 44px; min-height: 32px; padding: 2px 8px; border: 2px solid #ffffff; border-radius: 16px;
+  background: rgba(10, 100, 216, 0.85); color: #ffffff; font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); cursor: pointer;
+}
+body.inking .jump { pointer-events: none; }
+.jump-back {
+  position: fixed; left: max(8px, env(safe-area-inset-left)); bottom: max(8px, env(safe-area-inset-bottom)); z-index: 10;
+  background: rgba(10, 100, 216, 0.92); color: #ffffff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.jump-back[hidden], #link-box[hidden] { display: none; }
 body.inking #stage { cursor: crosshair; }
 .beat-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--line); flex: 0 0 auto; }
 .beat-dot.on { background: var(--accent); }

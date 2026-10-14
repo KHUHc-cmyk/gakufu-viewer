@@ -2,7 +2,7 @@
 import * as pdfjs from '../vendor/pdfjs/pdf.mjs';
 import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, findCrop, zoneAt, looksLikePdf, titleOf } from './pdf-layout.js';
 import * as store from './pdf-store.js';
-import { TOOLS, ERASER, toPage, drawStrokes, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt } from './pdf-ink.js';
+import { TOOLS, ERASER, LINK, toPage, fromPage, drawStrokes, addPoint, hitStroke, addLink, hitLink, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt } from './pdf-ink.js';
 import { createMetronome } from './pdf-metronome.js';
 import { buildPdf, exportName, exportPixels } from './pdf-export.js';
 import { findInShelf } from './pdf-shelf.js';
@@ -45,6 +45,9 @@ const el = {
   exportPdf: $('export'),
   exportSave: $('export-save'),
   inkHint: $('ink-hint'),
+  linkBox: $('link-box'),
+  linkTo: $('link-to'),
+  jumpBack: $('jump-back'),
   metro: $('metro'),
   bpm: $('bpm'),
   bpmDown: $('bpm-down'),
@@ -109,6 +112,7 @@ const EXPORT_QUALITY = 0.85; // 書き出す絵（JPEG）の質
 const PEN_REST = 600; // ペンを離してから、これだけの間は、指でめくらない（書いている手のひらでめくらないように）
 const INK_MAX_PIXELS = 3000000; // 書き込みを描くキャンバスの、画素の上限
 const ERASER_REACH = 0.012; // 消しゴムの大きさ（紙の幅に対する割合）
+const LINK_REACH = 0.03; // 消しゴムで、とび先の印に触れたとみなす近さ（紙の幅に対する割合）
 const NOTES_SAVE_MS = 600; // 書き込み・しおりを、変えてから保存するまでの間
 
 // ---------------------------------------------------------------- 設定を覚える（この端末の中だけ）
@@ -147,7 +151,7 @@ function saveSettings() {
   el.speed.value = String(settings.speed);
   el.speedOut.textContent = String(settings.speed);
   el.stage.dataset.tone = settings.tone;
-  if (TOOLS[saved.tool] || saved.tool === ERASER) settings.tool = saved.tool;
+  if (TOOLS[saved.tool] || saved.tool === ERASER || saved.tool === LINK) settings.tool = saved.tool;
   settings.bpm = clampBpm(saved.bpm);
   if (hasOption(el.beats, String(saved.beats))) settings.beats = Number(saved.beats);
   el.bpm.value = String(settings.bpm);
@@ -191,6 +195,7 @@ const state = {
   crossing: false, // となりの曲を開いている途中
   rangeEdit: null, // セットリストの欄で、ページの範囲を直している曲の位置（直していなければ null）
   exported: null, // 作った書き込みつきの PDF（File）
+  jumpFrom: null, // とび先の印で飛ぶ前のページ（「戻る」で帰る。無ければ null）
 };
 
 window.__pdf = { state, settings, get metronome() { return metronome; } }; // 画面のテスト用
@@ -367,6 +372,31 @@ function paintInk(sheet, live = null) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const strokes = state.notes.ink[info.n] ?? [];
   drawStrokes(ctx, live ? [...strokes, live] : strokes, canvas.width, canvas.height, crop, turn);
+  if (!live) paintLinks(sheet);
+}
+
+// その紙に、とび先の印を置き直す（余白カットで切れた所の印は、紙の端に寄せる）
+function paintLinks(sheet) {
+  const info = sheet.inkInfo;
+  sheet.querySelector('.jumps')?.remove();
+  const links = state.notes.links[info.n] ?? [];
+  if (!links.length) return;
+  const box = document.createElement('div');
+  box.className = 'jumps';
+  const edge = (v) => Math.min(0.97, Math.max(0.03, v));
+  for (const link of links) {
+    const [fx, fy] = fromPage(link.x, link.y, info.crop, info.turn);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'jump';
+    button.dataset.to = String(link.to);
+    button.textContent = `→ ${link.to}`;
+    button.setAttribute('aria-label', `${link.to} ページへ飛ぶ`);
+    button.style.left = `${edge(fx) * 100}%`;
+    button.style.top = `${edge(fy) * 100}%`;
+    box.append(button);
+  }
+  sheet.append(box);
 }
 
 // 画面に出ている紙のうち、そのページのもの（pages を省くと全部）の書き込みを描き直す
@@ -683,6 +713,7 @@ function showPosition() {
 
 function go(dir) {
   if (!state.doc) return;
+  hideJumpBack();
   if (state.layout === 'scroll') {
     if ((atScrollEnd(dir) || atRangeEnd(dir)) && crossSong(dir)) return;
     el.stage.scrollBy({ top: dir * el.stage.clientHeight * 0.85, behavior: 'smooth' });
@@ -701,11 +732,33 @@ function go(dir) {
 
 function goTo(page) {
   if (!state.doc) return;
+  hideJumpBack();
   state.pos = normalize({ page, half: false }, state.layout, state.count, settings.half);
   showPosition();
   if (state.layout === 'scroll') scrollToPage(state.pos.page);
   else drawPaged();
 }
+
+// とび先の印を押した：そのページへ飛び、「◯ ページへ戻る」を出す（ほかの めくり方をしたら、消える）
+function jumpTo(to) {
+  const from = state.pos.page;
+  if (!state.doc || !Number.isInteger(to) || to < 1 || to > state.count) return;
+  goTo(to);
+  state.jumpFrom = from;
+  el.jumpBack.textContent = `← ${from} ページへ戻る`;
+  el.jumpBack.hidden = false;
+}
+
+function hideJumpBack() {
+  state.jumpFrom = null;
+  el.jumpBack.hidden = true;
+}
+
+el.jumpBack.addEventListener('click', () => {
+  el.jumpBack.blur();
+  const from = state.jumpFrom;
+  if (from != null) goTo(from);
+});
 
 function applyTouch() {
   // 1ページ・見開きでは、左右にはらう動きをこのページで受け取る（広げて見ているときは、ブラウザに任せて動かせるようにする）
@@ -741,6 +794,7 @@ function closeDocument() {
   saveNotesNow();
   setInkMode(false);
   state.notes = emptyNotes();
+  hideJumpBack();
   state.undo = [];
   state.outline = null;
   el.inkUndo.disabled = true;
@@ -824,6 +878,7 @@ async function openDocument(meta, bytes, { start = null, playing = null } = {}) 
   el.empty.hidden = true;
   setPlaying(playing);
   el.seek.max = String(state.count);
+  el.linkTo.max = String(state.count);
   setControls(true);
   setStatus('');
   if (meta.id != null) {
@@ -1550,6 +1605,7 @@ el.setsList.addEventListener('click', async (e) => {
 function setTool(tool) {
   settings.tool = tool;
   for (const button of el.inkTools) button.setAttribute('aria-pressed', String(button.dataset.tool === tool));
+  el.linkBox.hidden = tool !== LINK;
 }
 
 function setInkMode(on) {
@@ -1605,6 +1661,11 @@ function pushUndo(op) {
   notesChanged();
 }
 
+function linksOf(n) {
+  state.notes.links[n] ??= [];
+  return state.notes.links[n];
+}
+
 function strokesOf(n) {
   state.notes.ink[n] ??= [];
   return state.notes.ink[n];
@@ -1618,9 +1679,15 @@ function undoInk() {
     const list = strokesOf(op.n);
     const at = list.indexOf(op.stroke);
     if (at >= 0) list.splice(at, 1);
+  } else if (op.type === 'link') {
+    const list = linksOf(op.n);
+    const at = list.indexOf(op.link);
+    if (at >= 0) list.splice(at, 1);
   } else if (op.type === 'remove') {
     const list = strokesOf(op.n);
     for (const item of [...op.items].reverse()) list.splice(Math.min(item.index, list.length), 0, item.stroke);
+    const links = linksOf(op.n);
+    for (const item of [...(op.links ?? [])].reverse()) links.splice(Math.min(item.index, links.length), 0, item.link);
   } else if (op.type === 'clear') {
     for (const [n, list] of op.pages) state.notes.ink[n] = list;
   }
@@ -1661,16 +1728,21 @@ function inkPoint(sheet, e) {
 }
 
 function eraseAt(x, y) {
-  const { sheet, removed } = drawing;
+  const { sheet, removed, removedLinks } = drawing;
   const list = strokesOf(sheet.inkInfo.n);
   for (let i = list.length - 1; i >= 0; i--) {
     if (hitStroke(list[i], x, y, sheet.inkInfo.aspect, ERASER_REACH)) removed.push({ index: i, stroke: list.splice(i, 1)[0] });
+  }
+  const links = linksOf(sheet.inkInfo.n);
+  for (let i = links.length - 1; i >= 0; i--) {
+    if (hitLink(links[i], x, y, sheet.inkInfo.aspect, LINK_REACH)) removedLinks.push({ index: i, link: links.splice(i, 1)[0] });
   }
 }
 
 function inkMove(e) {
   const [x, y] = inkPoint(drawing.sheet, e);
-  if (drawing.removed) eraseAt(x, y);
+  if (drawing.link) drawing.at = [x, y]; // とび先は、指（ペン）を離した所に置く
+  else if (drawing.removed) eraseAt(x, y);
   else addPoint(drawing.stroke.p, x, y);
 }
 
@@ -1694,7 +1766,9 @@ el.stage.addEventListener('pointerdown', (e) => {
   const sheet = e.target instanceof Element ? e.target.closest('.sheet') : null;
   if (!sheet || !sheet.inkInfo) return;
   e.preventDefault();
-  drawing = settings.tool === ERASER ? { id: e.pointerId, sheet, removed: [] } : { id: e.pointerId, sheet, stroke: { t: settings.tool, p: [] } };
+  if (settings.tool === LINK) drawing = { id: e.pointerId, sheet, link: true, at: null };
+  else if (settings.tool === ERASER) drawing = { id: e.pointerId, sheet, removed: [], removedLinks: [] };
+  else drawing = { id: e.pointerId, sheet, stroke: { t: settings.tool, p: [] } };
   inkMove(e);
   try {
     el.stage.setPointerCapture(e.pointerId);
@@ -1713,14 +1787,23 @@ el.stage.addEventListener('pointermove', (e) => {
 function endInk(e) {
   if (e.pointerType === 'pen') penAt = performance.now();
   if (!drawing || e.pointerId !== drawing.id) return;
-  const { sheet, stroke, removed } = drawing;
+  const { sheet, stroke, removed, removedLinks, link, at } = drawing;
   drawing = null;
   const n = sheet.inkInfo.n;
   if (stroke && stroke.p.length >= 2) {
     strokesOf(n).push(stroke);
     pushUndo({ type: 'add', n, stroke });
-  } else if (removed && removed.length) {
-    pushUndo({ type: 'remove', n, items: removed });
+  } else if (removed && (removed.length || removedLinks.length)) {
+    pushUndo({ type: 'remove', n, items: removed, links: removedLinks });
+  } else if (link && at) {
+    const to = Number(el.linkTo.value);
+    const added = addLink(linksOf(n), at[0], at[1], to, state.count);
+    if (added) {
+      pushUndo({ type: 'link', n, link: added });
+      setStatus(`${n} ページに、${to} ページへのとび先を置きました（書き込みを終えると、押せます）`);
+    } else {
+      setStatus(`「飛ぶページ」は、1〜${state.count} の数で入れてください`);
+    }
   }
   repaintInk([n]);
 }
@@ -1912,6 +1995,12 @@ el.stage.addEventListener('click', (e) => {
     return;
   }
   if (!state.doc) return;
+  const jump = e.target instanceof Element ? e.target.closest('.jump') : null;
+  if (jump && !state.inkMode) {
+    jump.blur(); // ペダルのスペースで、もう一度押さないように
+    jumpTo(Number(jump.dataset.to));
+    return;
+  }
   if (state.inkMode && !inkTap) return;
   inkTap = false;
   const rect = el.stage.getBoundingClientRect();

@@ -2,6 +2,7 @@
 // 線の位置は、紙の全体に対する割合（0〜1）で持つ。余白カットや画面の大きさが変わっても、紙の同じ所に出る。
 // 紙を回していても（turn：0・90・180・270。時計回り）、線の位置は、回す前の紙（PDF のもとの向き）に対する割合で持つ。
 // 線：{ t: 道具の名前, p: [x0, y0, x1, y1, …] }
+// とび先：{ x, y, to }（紙の上の (x, y) に印を置き、押すと to ページへ飛ぶ。D.S.・コーダなど）
 
 // 太さ（width）は、紙の幅に対する割合
 export const TOOLS = Object.freeze({
@@ -12,10 +13,12 @@ export const TOOLS = Object.freeze({
 });
 
 export const ERASER = 'eraser';
+export const LINK = 'link';
 const MIN_STEP = 0.0012; // これより近い点は、足さない（線を軽くする）
 const MAX_POINTS = 4000; // 線1本の点の上限
 const MAX_MARKS = 200;
 const MARK_NAME_MAX = 40;
+const MAX_LINKS = 30; // 1ページのとび先の上限
 
 function clamp01(v) {
   return Math.min(1, Math.max(0, v));
@@ -158,7 +161,20 @@ export function withMark(marks, page, name) {
 }
 
 export function emptyNotes() {
-  return { marks: [], ink: {} };
+  return { marks: [], ink: {}, links: {} };
+}
+
+// とび先を足す（ページの数の外・上限を越えるものは足さない。足したら、その印。足せなければ null）
+export function addLink(list, x, y, to, count) {
+  if (!Number.isInteger(to) || to < 1 || to > count || list.length >= MAX_LINKS) return null;
+  const link = { x: round4(clamp01(x)), y: round4(clamp01(y)), to };
+  list.push(link);
+  return link;
+}
+
+// 点 (x, y) が、とび先の印に触れているか（aspect・reach は hitStroke と同じ）
+export function hitLink(link, x, y, aspect, reach) {
+  return Math.hypot(x - link.x, (y - link.y) * aspect) <= reach;
 }
 
 // 保存してあった覚え（しおり・書き込み）を、決まった形に直す。おかしな中身は捨てる
@@ -177,6 +193,17 @@ export function cleanNotes(raw, count = Infinity) {
       if (!okPage(page) || !Array.isArray(list)) continue;
       const strokes = list.map(cleanStroke).filter(Boolean);
       if (strokes.length) out.ink[page] = strokes;
+    }
+  }
+  if (raw.links && typeof raw.links === 'object') {
+    for (const [key, list] of Object.entries(raw.links)) {
+      const page = Number(key);
+      if (!okPage(page) || !Array.isArray(list)) continue;
+      const links = [];
+      for (const l of list) {
+        if (l && Number.isFinite(l.x) && Number.isFinite(l.y)) addLink(links, l.x, l.y, l.to, count);
+      }
+      if (links.length) out.links[page] = links;
     }
   }
   return out;

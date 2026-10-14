@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePdf } from './fixtures/make-pdf.js';
-import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt, turned, unturned } from '../src/pdf-ink.js';
+import { TOOLS, ERASER, LINK, addLink, hitLink, toPage, fromPage, addPoint, hitStroke, markName, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn, cleanTurns, turnAt, turned, unturned } from '../src/pdf-ink.js';
 
 const FULL = { l: 0, t: 0, r: 1, b: 1 };
 const CUT = { l: 0.2, t: 0.1, r: 0.8, b: 0.9 };
@@ -122,6 +122,26 @@ test('保存してあった覚えを読む：おかしな中身は捨て、ペ�
   }, 5);
   assert.deepEqual(notes.marks, [{ page: 1, name: '1 ページ目' }, { page: 3, name: 'サビ' }]);
   assert.deepEqual(notes.ink, { 2: [{ t: 'red', p: [0.1, 0.2, 0.3, 0.4] }, { t: 'blue', p: [1, 0] }] });
+  assert.deepEqual(cleanNotes({ marks: [], ink: {} }, 5).links, {}, '前の形の覚え（とび先が無い）も読める');
+});
+
+test('とび先：紙の上の位置と、飛ぶページを持つ。ページの数の外・おかしな中身は捨てる', () => {
+  assert.equal(LINK, 'link');
+  const list = [];
+  assert.deepEqual(addLink(list, 0.123456, 1.5, 3, 5), { x: 0.1235, y: 1, to: 3 });
+  assert.equal(addLink(list, 0.5, 0.5, 6, 5), null);
+  assert.equal(addLink(list, 0.5, 0.5, 0, 5), null);
+  assert.equal(addLink(list, 0.5, 0.5, 2.5, 5), null);
+  assert.equal(list.length, 1);
+  for (let i = 0; i < 40; i++) addLink(list, 0.5, 0.5, 1, 5);
+  assert.equal(list.length, 30, '1ページに 30 まで');
+  // 触れたか：たての距離は、紙の 高さ ÷ 幅 を掛けて、幅の物差しで測る
+  const link = { x: 0.5, y: 0.5, to: 1 };
+  assert.ok(hitLink(link, 0.52, 0.5, 1.4, 0.03));
+  assert.ok(!hitLink(link, 0.5, 0.525, 1.4, 0.03));
+  assert.ok(hitLink(link, 0.5, 0.52, 1.4, 0.03));
+  const notes = cleanNotes({ links: { 2: [{ x: 0.2, y: 0.3, to: 4 }, { x: 0.2, y: 0.3, to: 9 }, { x: 'a', y: 0, to: 1 }, null], 9: [{ x: 0, y: 0, to: 1 }], 3: 'こわれた' } }, 5);
+  assert.deepEqual(notes.links, { 2: [{ x: 0.2, y: 0.3, to: 4 }] });
 });
 
 test('メトロノームの速さ：40〜240 に収める。数でないものは、前の値のまま', () => {

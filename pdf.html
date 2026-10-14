@@ -78,7 +78,9 @@
       <button type="button" class="btn sub ink-tool" data-tool="blue" aria-pressed="false">青</button>
       <button type="button" class="btn sub ink-tool" data-tool="marker" aria-pressed="false">蛍光ペン</button>
       <button type="button" class="btn sub ink-tool" data-tool="eraser" aria-pressed="false">消しゴム</button>
+      <button type="button" class="btn sub ink-tool" data-tool="link" aria-pressed="false" aria-label="とび先（紙をタップした所に、押すとほかのページへ飛ぶ印を置く）">とび先</button>
     </span>
+    <label id="link-box" class="group num" hidden>飛ぶページ <input id="link-to" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="とび先の印を押したときに飛ぶページ"></label>
     <button id="ink-undo" type="button" class="btn sub" disabled>元に戻す</button>
     <button id="ink-clear" type="button" class="btn sub">このページを消す</button>
     <label class="group toggle"><input id="pen-only" type="checkbox"> ペンだけで書く</label>
@@ -102,7 +104,7 @@
       <li>画面の右をタップ＝次のページ／左をタップ＝前のページ（左右にはらっても、めくれます）</li>
       <li>真ん中をタップ＝操作の欄を出す／かくす（「たたむ」は、めくる行だけを残します）</li>
       <li>キーボードとペダルは ← → ・PageUp／PageDown・スペース</li>
-      <li>「しおり」＝ページに名前を付けて飛ぶ／「書き込み」＝ペン・蛍光ペン・消しゴム／メトロノーム</li>
+      <li>「しおり」＝ページに名前を付けて飛ぶ／「書き込み」＝ペン・蛍光ペン・消しゴム・とび先（D.S. やコーダの所に、押すと飛ぶ印を置く）／メトロノーム</li>
       <li>横倒しの PDF は「右に回す」、1ページだけ横向きなら「このページだけ回す」で直せます（向きは、PDF ごとに覚えます）</li>
       <li>「セットリスト」＝本番の曲順に PDF を並べる（最後のページで「次へ」を押すと、次の曲へ移ります）</li>
       <li>開いた PDF は「本棚」に残り、次からは前回のページから開きます<span id="offline"></span></li>
@@ -110,6 +112,7 @@
   </div>
 </main>
 <div id="pager" class="pager" hidden></div>
+<button id="jump-back" type="button" class="btn jump-back" hidden></button>
 <section id="shelf" class="shelf" hidden aria-label="本棚">
   <div class="shelf-box">
     <div class="row">
