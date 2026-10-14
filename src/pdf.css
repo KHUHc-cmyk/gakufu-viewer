@@ -76,6 +76,9 @@ body.pdf .bar { max-height: 60dvh; overflow-y: auto; }
 /* たたんでいても、書き込みの道具は出す */
 .bar.folded #ink-row:not([hidden]) { display: flex; }
 .marks-add { margin: 8px 0; }
+/* セットリストに足す曲の、ページの範囲（曲集の PDF のとき） */
+.marks-add .set-range { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; color: var(--muted); font-size: 14px; }
+.marks-add .set-range input { flex: 0 0 auto; width: 76px; padding: 0 8px; }
 /* セットリスト：曲の行の「↑」「↓」「外す」 */
 .shelf-list .set-move { flex: 0 0 auto; min-height: 52px; min-width: 44px; padding: 0 8px; }
 .shelf-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

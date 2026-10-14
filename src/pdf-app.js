@@ -6,7 +6,7 @@ import { TOOLS, ERASER, toPage, drawStrokes, addPoint, hitStroke, withMark, empt
 import { createMetronome } from './pdf-metronome.js';
 import { buildPdf, exportName, exportPixels } from './pdf-export.js';
 import { findInShelf } from './pdf-shelf.js';
-import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate } from './pdf-setlist.js';
+import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate, itemId, makeItem, itemRange, rangeText } from './pdf-setlist.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -33,6 +33,8 @@ const el = {
   setSongs: $('set-songs'),
   setSong: $('set-song'),
   setSongAdd: $('set-song-add'),
+  setFrom: $('set-from'),
+  setTo: $('set-to'),
   ink: $('ink'),
   inkRow: $('ink-row'),
   inkTools: [...document.querySelectorAll('.ink-tool')],
@@ -179,7 +181,7 @@ const state = {
   inkMode: false, // 書き込み中かどうか
   undo: [], // 元に戻せる操作（この PDF を開いている間だけ）
   outline: null, // PDF の目次（[{ title, page, level }]。まだ読んでいなければ null）
-  sets: [], // セットリスト（[{ id, name, items, made }]。items は本棚の番号の並び）
+  sets: [], // セットリスト（[{ id, name, items, made }]。items は曲の並び＝本棚の番号か { id, from, to }）
   shelf: [], // 最後に読んだ、本棚の一覧（最近開いた順）
   playing: null, // いま開いている曲の、セットリストの中の位置（{ id, index }。セットリストの外なら null）
   editing: null, // セットリストの欄で、中を見ているセットリストの番号（一覧なら null）
@@ -678,10 +680,11 @@ function showPosition() {
 function go(dir) {
   if (!state.doc) return;
   if (state.layout === 'scroll') {
-    if (atScrollEnd(dir) && crossSong(dir)) return;
+    if ((atScrollEnd(dir) || atRangeEnd(dir)) && crossSong(dir)) return;
     el.stage.scrollBy({ top: dir * el.stage.clientHeight * 0.85, behavior: 'smooth' });
     return;
   }
+  if (atRangeEnd(dir) && crossSong(dir)) return; // 曲集の中の曲：その曲のページの端で、となりの曲へ
   const next = step(state.pos, dir, state.layout, state.count, settings.half);
   if (samePos(next, state.pos)) {
     crossSong(dir); // 端のページ：セットリストの中なら、となりの曲へ
@@ -1227,7 +1230,7 @@ function notedSet(pdfId) {
   try {
     const noted = JSON.parse(localStorage.getItem(SET_KEY));
     const set = noted ? state.sets.find((s) => s.id === noted.id) : null;
-    return set && set.items[noted.index] === pdfId ? { id: set.id, index: noted.index } : null;
+    return set && itemId(set.items[noted.index]) === pdfId ? { id: set.id, index: noted.index } : null;
   } catch {
     return null;
   }
@@ -1251,13 +1254,43 @@ async function loadSets() {
   setPlaying(index < 0 ? null : { id: set.id, index });
 }
 
-async function openSetSong(set, index, start = 1) {
+// セットリストの index 曲目を開く。start：'first'＝その曲の頭・'last'＝その曲の最後のページ
+async function openSetSong(set, index, start = 'first') {
+  const item = set.items[index];
+  const id = itemId(item);
+  const playing = { id: set.id, index };
+  if (state.doc && state.meta && state.meta.id === id) {
+    // 同じ PDF の中（曲集の、となりの曲など）：開き直さずに、そのページへ
+    setPlaying(playing);
+    const range = itemRange(item, state.count);
+    goTo(start === 'last' ? range.to : range.from);
+    return true;
+  }
+  const page = typeof item === 'number' ? (start === 'last' ? 'last' : 1) : start === 'last' ? item.to ?? 'last' : item.from;
   state.crossing = true;
   try {
-    return await openFromShelf(set.items[index], { start, playing: { id: set.id, index } });
+    return await openFromShelf(id, { start: page, playing });
   } finally {
     state.crossing = false;
   }
+}
+
+// 曲集の中の曲（ページの範囲がある曲）で、その範囲の端にいるか（dir：1＝終わりの側・-1＝始めの側）
+function atRangeEnd(dir) {
+  const set = playingSet();
+  const item = set ? set.items[state.playing.index] : null;
+  if (!item || typeof item !== 'object') return false;
+  const { from, to } = itemRange(item, state.count);
+  if (state.layout === 'scroll') {
+    const sheet = el.stage.querySelector(`.sheet[data-page="${dir > 0 ? to : from}"]`);
+    if (!sheet) return false;
+    const r = sheet.getBoundingClientRect();
+    const box = el.stage.getBoundingClientRect();
+    return dir > 0 ? r.bottom <= box.bottom + 2 : r.top >= box.top - 2;
+  }
+  const next = step(state.pos, dir, state.layout, state.count, settings.half);
+  const shown = visiblePages(next, state.layout, state.count);
+  return dir > 0 ? Math.min(...shown) > to : Math.max(...shown) < from;
 }
 
 // セットリストの、となりの曲へ移る（次の曲は頭から・前の曲は最後のページから）。となりの曲があれば true
@@ -1266,7 +1299,7 @@ function crossSong(dir) {
   if (!set) return false;
   const to = neighbor(set.items, state.playing.index, dir);
   if (to < 0) return false;
-  if (!state.crossing) openSetSong(set, to, dir < 0 ? 'last' : 1); // 開いている途中に、もう一度押しても、曲を飛ばさない
+  if (!state.crossing) openSetSong(set, to, dir < 0 ? 'last' : 'first'); // 開いている途中に、もう一度押しても、曲を飛ばさない
   return true;
 }
 
@@ -1307,13 +1340,14 @@ function renderSets() {
     }
     if (!rows.length) rows.push(hintRow('まだありません。'));
   } else {
-    el.setsNote.textContent = '曲を押すと、その曲の頭から開きます。最後のページで「次へ」を押すと次の曲へ、最初のページで「前へ」を押すと前の曲の最後へ移ります。';
+    el.setsNote.textContent = '曲を押すと、その曲の頭から開きます。最後のページで「次へ」を押すと次の曲へ、最初のページで「前へ」を押すと前の曲の最後へ移ります。曲集の PDF は、「始め」「終わり」のページを入れて足すと、その曲だけを1曲として並べられます。';
     const byId = new Map(state.shelf.map((m) => [m.id, m]));
-    set.items.forEach((id, i) => {
-      const meta = byId.get(id);
+    set.items.forEach((item, i) => {
+      const meta = byId.get(itemId(item));
       if (!meta) return;
       const li = document.createElement('li');
-      const open = shelfRow(titleOf(meta.name), meta.pages ? `${i + 1} 曲目・${meta.pages} ページ` : `${i + 1} 曲目`, { song: String(i) });
+      const pages = rangeText(item) || (meta.pages ? `${meta.pages} ページ` : '');
+      const open = shelfRow(titleOf(meta.name), pages ? `${i + 1} 曲目・${pages}` : `${i + 1} 曲目`, { song: String(i) });
       if (state.playing && state.playing.id === set.id && state.playing.index === i) open.setAttribute('aria-current', 'true');
       const up = setButton('↑', '前へ動かす', { move: String(i), dir: '-1' });
       up.disabled = i === 0;
@@ -1335,7 +1369,7 @@ function renderSets() {
       option.textContent = titleOf(m.name);
       return option;
     }));
-    const fresh = shelf.find((m) => !set.items.includes(m.id));
+    const fresh = shelf.find((m) => !set.items.some((item) => itemId(item) === m.id));
     if (fresh) el.setSong.value = String(fresh.id);
     el.setSong.disabled = !shelf.length;
     el.setSongAdd.disabled = !shelf.length || set.items.length >= MAX_SONGS;
@@ -1391,7 +1425,9 @@ el.setSongAdd.addEventListener('click', () => {
   const set = state.sets.find((s) => s.id === state.editing);
   const id = Number(el.setSong.value);
   if (!set || !state.shelf.some((m) => m.id === id) || set.items.length >= MAX_SONGS) return;
-  changeSet(set, [...set.items, id]);
+  changeSet(set, [...set.items, makeItem(id, el.setFrom.value, el.setTo.value)]);
+  el.setFrom.value = '';
+  el.setTo.value = '';
 });
 el.setsList.addEventListener('click', async (e) => {
   const open = e.target.closest('[data-set]');

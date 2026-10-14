@@ -1,7 +1,7 @@
 // PDF の楽譜のページ：セットリスト（本番の曲順）の計算（src/pdf-setlist.js）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate } from '../src/pdf-setlist.js';
+import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate, itemId, makeItem, cleanItem, itemRange, rangeText } from '../src/pdf-setlist.js';
 
 test('セットリストの名前：前後の空白を取る。空なら「セットリスト ◯」。40字まで', () => {
   assert.equal(setName('  10月のライブ ', 1), '10月のライブ');
@@ -92,4 +92,47 @@ test('並びが変わった後の位置：同じ位置にいれば そのまま�
   assert.equal(locate([10, 30], 1, 20), -1);
   assert.equal(locate([20, 10, 30, 20], 2, 20), 3);
   assert.equal(locate([], 0, 20), -1);
+});
+
+// ---------------------------------------------------------------- 曲集の PDF から、ページの範囲を1曲として並べる（2026-10-14）
+
+test('曲集の曲：ページが空なら PDF の全部（番号だけ）。始めと終わりが逆なら入れ替える。片方だけでもよい', () => {
+  assert.equal(makeItem(5, '', ''), 5);
+  assert.equal(makeItem(5, '0', 'x'), 5);
+  assert.deepEqual(makeItem(5, '3', '4'), { id: 5, from: 3, to: 4 });
+  assert.deepEqual(makeItem(5, 7, 6), { id: 5, from: 6, to: 7 });
+  assert.deepEqual(makeItem(5, '10', ''), { id: 5, from: 10, to: null });
+  assert.deepEqual(makeItem(5, '', '4'), { id: 5, from: 1, to: 4 });
+  assert.deepEqual(makeItem(5, '2.5', '4'), { id: 5, from: 1, to: 4 });
+});
+
+test('曲集の曲：番号・範囲・文', () => {
+  assert.equal(itemId(5), 5);
+  assert.equal(itemId({ id: 6, from: 2, to: 3 }), 6);
+  assert.equal(itemId(null), null);
+  assert.deepEqual(itemRange(5, 8), { from: 1, to: 8 });
+  assert.deepEqual(itemRange({ id: 5, from: 3, to: 4 }, 8), { from: 3, to: 4 });
+  assert.deepEqual(itemRange({ id: 5, from: 6, to: null }, 8), { from: 6, to: 8 });
+  assert.deepEqual(itemRange({ id: 5, from: 6, to: 20 }, 8), { from: 6, to: 8 }, 'PDF のページの数に収める');
+  assert.deepEqual(itemRange({ id: 5, from: 12, to: 20 }, 8), { from: 8, to: 8 });
+  assert.equal(rangeText(5), '');
+  assert.equal(rangeText({ id: 5, from: 3, to: 4 }), '3〜4 ページ');
+  assert.equal(rangeText({ id: 5, from: 3, to: 3 }), '3 ページ');
+  assert.equal(rangeText({ id: 5, from: 3, to: null }), '3 ページから');
+});
+
+test('曲集の曲：保存してあった並びを直す（範囲つきの曲も残る。本棚に無い曲・おかしな中身は外す）。位置も探せる', () => {
+  const known = new Set([1, 2]);
+  assert.equal(cleanItem(1, known), 1);
+  assert.equal(cleanItem(9, known), null);
+  assert.deepEqual(cleanItem({ id: 2, from: 4, to: 3 }, known), { id: 2, from: 3, to: 4 });
+  assert.equal(cleanItem({ id: 9, from: 1, to: 2 }, known), null);
+  assert.equal(cleanItem({ id: '2' }, known), null);
+  assert.equal(cleanItem({ id: 2 }, known), 2, '範囲の無い曲は、番号だけにする');
+  const [set] = cleanSets([{ id: 1, name: 'x', items: [1, { id: 2, from: 3, to: 4 }, { id: 9, from: 1, to: 1 }, 'z'], made: 1 }], [1, 2]);
+  assert.deepEqual(set.items, [1, { id: 2, from: 3, to: 4 }]);
+  const items = [{ id: 2, from: 1, to: 2 }, 1, { id: 2, from: 5, to: 6 }];
+  assert.equal(locate(items, 2, 2), 2);
+  assert.equal(locate(items, 1, 2), 0);
+  assert.equal(locate(items, 0, 3), -1);
 });

@@ -3,7 +3,9 @@
 // meta：{ id, name, size, pages, lastPage, added, opened }／data：{ id, bytes（ArrayBuffer） }
 // しおりと書き込みは、別のデータベースに置く（notes：{ id, marks, ink }。id は本棚と同じ）。
 // 本棚のデータベースの版を上げないため（版を上げると、前の版のページが開いている間、開けなくなる）。
-// セットリスト（本番の曲順）も、同じわけで別のデータベースに置く（sets：{ id, name, items, made }。items は本棚の番号の並び）。
+// セットリスト（本番の曲順）も、同じわけで別のデータベースに置く（sets：{ id, name, items, made }。items は曲の並び＝本棚の番号か { id, from, to }。src/pdf-setlist.js）。
+
+import { itemId } from './pdf-setlist.js';
 
 const SHELF = { name: 'gakufu-viewer-pdf', version: 1, stores: [['meta', { keyPath: 'id', autoIncrement: true }], ['data', { keyPath: 'id' }]] };
 const NOTES = { name: 'gakufu-viewer-pdf-notes', version: 1, stores: [['notes', { keyPath: 'id' }]] };
@@ -205,6 +207,6 @@ export async function remove(id) {
     await done(ntx);
   }
   for (const set of await sets()) {
-    if (set.items.includes(id)) await saveSet({ ...set, items: set.items.filter((item) => item !== id) });
+    if (set.items.some((item) => itemId(item) === id)) await saveSet({ ...set, items: set.items.filter((item) => itemId(item) !== id) });
   }
 }

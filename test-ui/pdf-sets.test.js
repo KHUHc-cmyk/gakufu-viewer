@@ -314,3 +314,65 @@ test('セットリスト：せまい画面（幅 375）でも、曲の行と足�
     await context.close();
   }
 });
+
+test('セットリスト：曲集の PDF から、ページの範囲を1曲として並べる。範囲の端でめくると、となりの曲へ（同じ PDF の中は、開き直さない）', async () => {
+  const BOOK = { name: 'book-eight.pdf', mimeType: 'application/pdf', buffer: makePdf(8) };
+  const { page, errors } = await openPdf({ files: [BOOK, C] });
+  await page.click('#sets-open');
+  await page.waitForSelector('#sets-list .hint');
+  await page.fill('#set-name', '曲集から');
+  await page.click('#set-add');
+  await page.waitForSelector('#set-songs:not([hidden])');
+
+  await page.selectOption('#set-song', { label: 'book-eight' });
+  await page.fill('#set-from', '3');
+  await page.fill('#set-to', '4');
+  await page.click('#set-song-add');
+  await waitRows(page, 1);
+  assert.equal(await page.inputValue('#set-from'), '', '足したら、ページの欄は空に戻る');
+  await page.selectOption('#set-song', { label: 'book-eight' });
+  await page.fill('#set-from', '7');
+  await page.fill('#set-to', '6'); // 逆に入れても、入れ替わる
+  await page.click('#set-song-add');
+  await waitRows(page, 2);
+  await page.selectOption('#set-song', { label: 'c-one' });
+  await page.click('#set-song-add');
+  await waitRows(page, 3);
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・3〜4 ページ', 'book-eight｜2 曲目・6〜7 ページ', 'c-one｜3 曲目']);
+
+  // 1曲目は、範囲の頭（3 ページ）から開く
+  await page.click('#sets-list .shelf-item >> nth=0');
+  await waitSong(page, '1/3 book-eight', '3 / 8');
+  await waitShown(page, [3]);
+  await page.evaluate(() => { window.__pdf.state.doc.__mark = 1; });
+  await page.keyboard.press('ArrowRight');
+  await waitSong(page, '1/3 book-eight', '4 / 8');
+  // 範囲の終わりで「次へ」＝2曲目の頭（同じ PDF なので、開き直さない）
+  await page.keyboard.press('ArrowRight');
+  await waitSong(page, '2/3 book-eight', '6 / 8');
+  await waitShown(page, [6]);
+  assert.equal(await page.evaluate(() => window.__pdf.state.doc.__mark), 1, '同じ PDF は、開き直さない');
+  // 範囲の頭で「前へ」＝1曲目の最後のページ
+  await page.keyboard.press('ArrowLeft');
+  await waitSong(page, '1/3 book-eight', '4 / 8');
+  await page.keyboard.press('ArrowRight');
+  await waitSong(page, '2/3 book-eight', '6 / 8');
+  await page.keyboard.press('ArrowRight');
+  await waitSong(page, '2/3 book-eight', '7 / 8');
+  // 2曲目の終わりで「次へ」＝ほかの PDF の3曲目。「前へ」で、2曲目の最後（7 ページ）へ戻る
+  await page.keyboard.press('ArrowRight');
+  await waitSong(page, '3/3 c-one', '1 / 1');
+  await page.click('#prev');
+  await waitSong(page, '2/3 book-eight', '7 / 8');
+  await waitShown(page, [7]);
+
+  // 開き直しても、範囲は残る
+  await page.reload();
+  await page.waitForFunction(() => window.__pdf && window.__pdf.state.doc);
+  await waitSong(page, '2/3 book-eight', '7 / 8');
+  await page.click('#sets-open'); // セットリストの中にいるので、そのセットリストの中が出る
+  await waitRows(page, 3);
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・3〜4 ページ', 'book-eight｜2 曲目・6〜7 ページ', 'c-one｜3 曲目・1 ページ']);
+  assert.deepEqual(errors, []);
+  await page.close();
+});

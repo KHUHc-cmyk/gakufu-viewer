@@ -158,6 +158,12 @@
     <ul id="sets-list" class="shelf-list"></ul>
     <div id="set-songs" class="row marks-add" hidden>
       <select id="set-song" aria-label="足す曲（本棚から）"></select>
+      <span class="set-range">
+        <input id="set-from" type="number" min="1" step="1" inputmode="numeric" placeholder="始め" aria-label="始めのページ（空なら、はじめから）">
+        〜
+        <input id="set-to" type="number" min="1" step="1" inputmode="numeric" placeholder="終わり" aria-label="終わりのページ（空なら、最後まで）">
+        ページ
+      </span>
       <button id="set-song-add" type="button" class="btn primary">足す</button>
     </div>
   </div>
