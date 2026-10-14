@@ -16,6 +16,7 @@ const ASSETS = [
   './pdf.html',
   './src/pdf-app.js',
   './src/pdf-ink.js',
+  './src/pdf-export.js',
   './src/pdf-metronome.js',
   './src/pdf-setlist.js',
   './src/pdf-shelf.js',

@@ -2,8 +2,9 @@
 import * as pdfjs from '../vendor/pdfjs/pdf.mjs';
 import { FULL, layoutFor, normalize, visiblePages, step, fit, pixelRatioFor, findCrop, zoneAt, looksLikePdf, titleOf } from './pdf-layout.js';
 import * as store from './pdf-store.js';
-import { TOOLS, ERASER, toPage, fromPage, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn } from './pdf-ink.js';
+import { TOOLS, ERASER, toPage, drawStrokes, addPoint, hitStroke, withMark, emptyNotes, cleanNotes, clampBpm, cleanTurn, nextTurn } from './pdf-ink.js';
 import { createMetronome } from './pdf-metronome.js';
+import { buildPdf, exportName, exportPixels } from './pdf-export.js';
 import { findInShelf } from './pdf-shelf.js';
 import { MAX_SETS, MAX_SONGS, setName, cleanSets, moved, without, neighbor, indexAfterMove, indexAfterRemove, locate } from './pdf-setlist.js';
 
@@ -38,6 +39,8 @@ const el = {
   inkUndo: $('ink-undo'),
   inkClear: $('ink-clear'),
   penOnly: $('pen-only'),
+  exportPdf: $('export'),
+  exportSave: $('export-save'),
   inkHint: $('ink-hint'),
   metro: $('metro'),
   bpm: $('bpm'),
@@ -97,6 +100,8 @@ const SCROLL_PAD = 8;
 const SPEED_STEP = 6; // 自動スクロール：速さ 1 あたりの、1秒に進む画素
 const SWIPE_MIN = 40;
 const TAP_MAX = 400; // ペンだけで書くとき、指のタップとみなす長さ（ミリ秒）。手のひらを置いたままの時は、めくらない
+const EXPORT_SIDE = 2000; // 書き出す PDF の、ページの絵の長い辺の画素
+const EXPORT_QUALITY = 0.85; // 書き出す絵（JPEG）の質
 const PEN_REST = 600; // ペンを離してから、これだけの間は、指でめくらない（書いている手のひらでめくらないように）
 const INK_MAX_PIXELS = 3000000; // 書き込みを描くキャンバスの、画素の上限
 const ERASER_REACH = 0.012; // 消しゴムの大きさ（紙の幅に対する割合）
@@ -179,6 +184,7 @@ const state = {
   playing: null, // いま開いている曲の、セットリストの中の位置（{ id, index }。セットリストの外なら null）
   editing: null, // セットリストの欄で、中を見ているセットリストの番号（一覧なら null）
   crossing: false, // となりの曲を開いている途中
+  exported: null, // 作った書き込みつきの PDF（File）
 };
 
 window.__pdf = { state, settings, get metronome() { return metronome; } }; // 画面のテスト用
@@ -353,30 +359,8 @@ function paintInk(sheet, live = null) {
   const { canvas, crop, turn } = info;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // もとの紙の幅 1 あたりの画素（線の太さの物差し。横に倒した向きでは、画面の高さの側になる）
-  const unit = turn % 180 ? canvas.height / (crop.b - crop.t) : canvas.width / (crop.r - crop.l);
-  const at = (x, y) => {
-    const [fx, fy] = fromPage(x, y, crop, turn);
-    return [fx * canvas.width, fy * canvas.height];
-  };
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
   const strokes = state.notes.ink[info.n] ?? [];
-  for (const stroke of live ? [...strokes, live] : strokes) {
-    const tool = TOOLS[stroke.t];
-    if (!tool) continue;
-    const p = stroke.p;
-    ctx.globalAlpha = tool.alpha;
-    ctx.strokeStyle = tool.color;
-    ctx.lineWidth = Math.max(1, tool.width * unit);
-    ctx.beginPath();
-    const [x0, y0] = at(p[0], p[1]);
-    ctx.moveTo(x0, y0);
-    if (p.length === 2) ctx.lineTo(x0 + 0.01, y0);
-    for (let i = 2; i < p.length; i += 2) ctx.lineTo(...at(p[i], p[i + 1]));
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
+  drawStrokes(ctx, live ? [...strokes, live] : strokes, canvas.width, canvas.height, crop, turn);
 }
 
 // 画面に出ている紙のうち、そのページのもの（pages を省くと全部）の書き込みを描き直す
@@ -745,6 +729,7 @@ function relayout() {
 
 function closeDocument() {
   state.gen += 1;
+  dropExport();
   savePage();
   saveNotesNow();
   setInkMode(false);
@@ -1042,6 +1027,7 @@ el.turn.addEventListener('click', () => {
   if (meta.id != null) store.update(meta.id, { turn: state.turn }).catch(() => {});
   // 紙の形と余白カットの範囲は、向きで変わる。調べ直して、描き直す
   state.gen += 1;
+  dropExport();
   dropAllCanvases();
   state.bases.clear();
   state.crops.clear();
@@ -1076,6 +1062,7 @@ function saveNotesNow() {
 
 // 変えたら、少し待ってから保存する（本棚に入っていない PDF は、開いている間だけ覚える）
 function notesChanged() {
+  dropExport(); // 作ってあった書き出しは、古くなる
   clearTimeout(notesTimer);
   notesTimer = setTimeout(saveNotesNow, NOTES_SAVE_MS);
 }
@@ -1616,6 +1603,87 @@ function endInk(e) {
 
 el.stage.addEventListener('pointerup', endInk);
 el.stage.addEventListener('pointercancel', endInk);
+
+// ---------------------------------------------------------------- 書き込みつきの PDF を書き出す
+// 1ページずつ、紙と書き込みを重ねて絵に描き、PDF にまとめる（回した向きのまま。余白カット・色は使わない）。
+// 作り終えたら「保存・共有する」を出す（iPad の共有は、押した直後でないと断られるため、ボタンを分ける）
+
+let exporting = 0; // 作っている途中の番号（0 なら作っていない）
+
+function dropExport() {
+  state.exported = null;
+  el.exportSave.hidden = true;
+  if (exporting) exporting = 0; // 作っている途中なら、やめる
+  el.exportPdf.disabled = false;
+}
+
+async function exportPdf() {
+  if (!state.doc || exporting) return;
+  const job = Date.now();
+  exporting = job;
+  state.exported = null;
+  el.exportSave.hidden = true;
+  el.exportPdf.disabled = true;
+  const { doc, count, turn } = state; // 閉じた・回したときは、dropExport で取り消す
+  const title = titleOf(state.meta.name);
+  const pages = [];
+  const canvas = document.createElement('canvas');
+  try {
+    for (let n = 1; n <= count; n++) {
+      if (exporting !== job || doc !== state.doc) return;
+      setStatus(`書き込みつきの PDF を作っています… ${n} / ${count} ページ`);
+      const { page, w, h, rotation } = await basePage(n);
+      const size = exportPixels(w, h, EXPORT_SIDE);
+      canvas.width = size.w;
+      canvas.height = size.h;
+      const ctx = canvas.getContext('2d');
+      const viewport = page.getViewport({ scale: size.w / w, rotation });
+      await page.render({ canvas, canvasContext: ctx, viewport, background: '#ffffff' }).promise;
+      drawStrokes(ctx, state.notes.ink[n] ?? [], canvas.width, canvas.height, FULL, turn);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', EXPORT_QUALITY));
+      if (!blob) throw new Error('絵にできませんでした');
+      pages.push({ width: w, height: h, image: { bytes: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height } });
+    }
+    if (exporting !== job || doc !== state.doc) return;
+    state.exported = new File([buildPdf(pages)], exportName(title), { type: 'application/pdf' });
+    el.exportSave.hidden = false;
+    setStatus(`できました（${count} ページ・${Math.max(1, Math.round(state.exported.size / 1048576))} MB）。「保存・共有する」を押してください`);
+  } catch {
+    if (exporting === job) showError('書き込みつきの PDF を作れませんでした');
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+    if (exporting === job) {
+      exporting = 0;
+      el.exportPdf.disabled = false;
+    }
+  }
+}
+
+async function saveExport() {
+  const file = state.exported;
+  if (!file) return;
+  // iPad・iPhone：共有の画面から「"ファイル"に保存」や AirDrop へ。共有できないとき（PC・枠の中など）は、ダウンロードする
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // 共有の画面を閉じただけ
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+el.exportPdf.addEventListener('click', exportPdf);
+el.exportSave.addEventListener('click', saveExport);
 
 // ---------------------------------------------------------------- メトロノーム
 

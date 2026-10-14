@@ -61,6 +61,33 @@ export function fromPage(x, y, crop, turn = 0) {
   return [(u - crop.l) / (crop.r - crop.l), (v - crop.t) / (crop.b - crop.t)];
 }
 
+// 線を描く（画面の書き込み・書き出す PDF の両方で使う）。w × h は描く先の画素、crop は余白カットの範囲（回した紙の上で測ったもの）
+export function drawStrokes(ctx, strokes, w, h, crop, turn = 0) {
+  // もとの紙の幅 1 あたりの画素（線の太さの物差し。横に倒した向きでは、画面の高さの側になる）
+  const unit = turn % 180 ? h / (crop.b - crop.t) : w / (crop.r - crop.l);
+  const at = (x, y) => {
+    const [fx, fy] = fromPage(x, y, crop, turn);
+    return [fx * w, fy * h];
+  };
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const stroke of strokes) {
+    const tool = TOOLS[stroke.t];
+    if (!tool) continue;
+    const p = stroke.p;
+    ctx.globalAlpha = tool.alpha;
+    ctx.strokeStyle = tool.color;
+    ctx.lineWidth = Math.max(1, tool.width * unit);
+    ctx.beginPath();
+    const [x0, y0] = at(p[0], p[1]);
+    ctx.moveTo(x0, y0);
+    if (p.length === 2) ctx.lineTo(x0 + 0.01, y0);
+    for (let i = 2; i < p.length; i += 2) ctx.lineTo(...at(p[i], p[i + 1]));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
 // 線に点を足す。前の点に近すぎるとき・点が多すぎるときは足さない（足したら true）
 export function addPoint(points, x, y) {
   const n = points.length;
