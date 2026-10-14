@@ -376,3 +376,52 @@ test('セットリスト：曲集の PDF から、ページの範囲を1曲と�
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+test('セットリスト：足した曲のページの範囲を、「範囲」で後から直せる。空にすると PDF の全部に戻る。「やめる」・並べ替えで、直すのをやめる', async () => {
+  const BOOK = { name: 'book-eight.pdf', mimeType: 'application/pdf', buffer: makePdf(8) };
+  const { page, errors } = await openPdf({ files: [BOOK, C] });
+  await makeSet(page, '直す', 2);
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・8 ページ', 'c-one｜2 曲目']);
+  const ui = () => page.evaluate(() => ({
+    button: document.getElementById('set-song-add').textContent,
+    cancel: !document.getElementById('set-range-cancel').hidden,
+    locked: document.getElementById('set-song').disabled,
+    song: document.getElementById('set-song').selectedOptions[0]?.textContent,
+    from: document.getElementById('set-from').value,
+    to: document.getElementById('set-to').value,
+  }));
+
+  // 「範囲」を押すと、下の欄がその曲の範囲を直す形になる
+  await page.click('#sets-list [data-range="0"]');
+  assert.deepEqual(await ui(), { button: '範囲を直す', cancel: true, locked: true, song: 'book-eight', from: '', to: '' });
+  await page.fill('#set-from', '3');
+  await page.fill('#set-to', '5');
+  await page.click('#set-song-add');
+  await page.waitForFunction(() => document.getElementById('set-song-add').textContent === '足す');
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・3〜5 ページ', 'c-one｜2 曲目'], '曲の数は増えない');
+  assert.equal((await ui()).cancel, false);
+
+  // もう一度押すと、いまの範囲が欄に入る。空にして直すと、PDF の全部に戻る
+  await page.click('#sets-list [data-range="0"]');
+  assert.deepEqual(await ui(), { button: '範囲を直す', cancel: true, locked: true, song: 'book-eight', from: '3', to: '5' });
+  await page.fill('#set-from', '');
+  await page.fill('#set-to', '');
+  await page.click('#set-song-add');
+  await page.waitForFunction(() => document.getElementById('set-song-add').textContent === '足す');
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・8 ページ', 'c-one｜2 曲目']);
+
+  // 「やめる」：何も変えない
+  await page.click('#sets-list [data-range="1"]');
+  await page.fill('#set-from', '1');
+  await page.click('#set-range-cancel');
+  assert.deepEqual(await ui(), { button: '足す', cancel: false, locked: false, song: (await ui()).song, from: '', to: '' });
+  assert.deepEqual(await rowsOf(page), ['book-eight｜1 曲目・8 ページ', 'c-one｜2 曲目']);
+
+  // 並べ替えると、直すのをやめる
+  await page.click('#sets-list [data-range="0"]');
+  await page.click('#sets-list [data-move="0"][data-dir="1"]');
+  await page.waitForFunction(() => document.getElementById('set-song-add').textContent === '足す');
+  assert.deepEqual(await rowsOf(page), ['c-one｜1 曲目', 'book-eight｜2 曲目・8 ページ']);
+  assert.deepEqual(errors, []);
+  await page.close();
+});

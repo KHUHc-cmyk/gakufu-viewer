@@ -35,6 +35,7 @@ const el = {
   setSongAdd: $('set-song-add'),
   setFrom: $('set-from'),
   setTo: $('set-to'),
+  setRangeCancel: $('set-range-cancel'),
   ink: $('ink'),
   inkRow: $('ink-row'),
   inkTools: [...document.querySelectorAll('.ink-tool')],
@@ -186,6 +187,7 @@ const state = {
   playing: null, // いま開いている曲の、セットリストの中の位置（{ id, index }。セットリストの外なら null）
   editing: null, // セットリストの欄で、中を見ているセットリストの番号（一覧なら null）
   crossing: false, // となりの曲を開いている途中
+  rangeEdit: null, // セットリストの欄で、ページの範囲を直している曲の位置（直していなければ null）
   exported: null, // 作った書き込みつきの PDF（File）
 };
 
@@ -1340,7 +1342,7 @@ function renderSets() {
     }
     if (!rows.length) rows.push(hintRow('まだありません。'));
   } else {
-    el.setsNote.textContent = '曲を押すと、その曲の頭から開きます。最後のページで「次へ」を押すと次の曲へ、最初のページで「前へ」を押すと前の曲の最後へ移ります。曲集の PDF は、「始め」「終わり」のページを入れて足すと、その曲だけを1曲として並べられます。';
+    el.setsNote.textContent = '曲を押すと、その曲の頭から開きます。最後のページで「次へ」を押すと次の曲へ、最初のページで「前へ」を押すと前の曲の最後へ移ります。曲集の PDF は、「始め」「終わり」のページを入れて足すと、その曲だけを1曲として並べられます。足した後は「範囲」で直せます。';
     const byId = new Map(state.shelf.map((m) => [m.id, m]));
     set.items.forEach((item, i) => {
       const meta = byId.get(itemId(item));
@@ -1353,7 +1355,9 @@ function renderSets() {
       up.disabled = i === 0;
       const down = setButton('↓', '後ろへ動かす', { move: String(i), dir: '1' });
       down.disabled = i === set.items.length - 1;
-      li.append(open, up, down, setButton('外す', '', { out: String(i) }));
+      const range = setButton('範囲', 'ページの範囲を直す', { range: String(i) });
+      if (state.rangeEdit === i) range.setAttribute('aria-pressed', 'true');
+      li.append(open, up, down, range, setButton('外す', '', { out: String(i) }));
       rows.push(li);
     });
     if (!rows.length) {
@@ -1373,12 +1377,29 @@ function renderSets() {
     if (fresh) el.setSong.value = String(fresh.id);
     el.setSong.disabled = !shelf.length;
     el.setSongAdd.disabled = !shelf.length || set.items.length >= MAX_SONGS;
+    const editing = state.rangeEdit !== null ? set.items[state.rangeEdit] : undefined;
+    if (editing !== undefined) {
+      // 範囲を直している：その曲を選んだまま動かさず、いまの範囲を欄に入れる
+      el.setSong.value = String(itemId(editing));
+      el.setSong.disabled = true;
+      el.setSongAdd.disabled = false;
+    } else {
+      state.rangeEdit = null;
+    }
+    el.setSongAdd.textContent = editing !== undefined ? '範囲を直す' : '足す';
+    el.setRangeCancel.hidden = editing === undefined;
   }
   el.setsList.replaceChildren(...rows);
 }
 
 async function setSetsOpen(open) {
   el.sets.hidden = !open;
+  if (state.rangeEdit !== null) {
+    // 範囲を直している途中で閉じた・開き直したときは、やめる（欄の数字も消す）
+    state.rangeEdit = null;
+    el.setFrom.value = '';
+    el.setTo.value = '';
+  }
   if (!open) return;
   if (state.playing) state.editing = state.playing.id; // セットリストの中にいるときは、そのセットリストから出す
   renderSets(); // 前に開いたときの中身が残らないように、まず、いま分かっている中身で出す
@@ -1415,14 +1436,47 @@ el.sets.addEventListener('click', (e) => {
 });
 el.setsBack.addEventListener('click', () => {
   state.editing = null;
+  state.rangeEdit = null;
   renderSets();
 });
 el.setAdd.addEventListener('click', addSet);
 el.setName.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addSet();
 });
+// ページの範囲を直し始める（下の欄に、いまの範囲が入る）／やめる
+function startRangeEdit(index) {
+  const set = state.sets.find((s) => s.id === state.editing);
+  if (!set || index < 0 || index >= set.items.length) return;
+  state.rangeEdit = state.rangeEdit === index ? null : index; // もう一度押すと、やめる
+  const item = set.items[index];
+  const on = state.rangeEdit !== null;
+  el.setFrom.value = on && typeof item === 'object' ? String(item.from) : '';
+  el.setTo.value = on && typeof item === 'object' && item.to != null ? String(item.to) : '';
+  renderSets();
+  if (on) el.setFrom.focus();
+}
+
+function stopRangeEdit() {
+  state.rangeEdit = null;
+  el.setFrom.value = '';
+  el.setTo.value = '';
+  renderSets();
+}
+
+el.setRangeCancel.addEventListener('click', stopRangeEdit);
+
 el.setSongAdd.addEventListener('click', () => {
   const set = state.sets.find((s) => s.id === state.editing);
+  if (set && state.rangeEdit !== null) {
+    const index = state.rangeEdit;
+    const items = set.items.slice();
+    items[index] = makeItem(itemId(items[index]), el.setFrom.value, el.setTo.value);
+    state.rangeEdit = null;
+    el.setFrom.value = '';
+    el.setTo.value = '';
+    changeSet(set, items);
+    return;
+  }
   const id = Number(el.setSong.value);
   if (!set || !state.shelf.some((m) => m.id === id) || set.items.length >= MAX_SONGS) return;
   changeSet(set, [...set.items, makeItem(id, el.setFrom.value, el.setTo.value)]);
@@ -1435,9 +1489,16 @@ el.setsList.addEventListener('click', async (e) => {
   const song = e.target.closest('[data-song]');
   const move = e.target.closest('[data-move]');
   const out = e.target.closest('[data-out]');
+  const range = e.target.closest('[data-range]');
   const set = state.sets.find((s) => s.id === state.editing) ?? null;
+  if (range && set) {
+    startRangeEdit(Number(range.dataset.range));
+    return;
+  }
+  if ((move || out) && set) state.rangeEdit = null; // 並びを変えると、位置がずれるので、直すのをやめる
   if (open) {
     state.editing = Number(open.dataset.set);
+    state.rangeEdit = null;
     renderSets();
   } else if (del) {
     if (!window.confirm(`セットリスト「${del.dataset.name}」を消しますか？（PDF は本棚に残ります）`)) return;

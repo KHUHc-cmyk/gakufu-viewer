@@ -81,6 +81,7 @@ body.pdf .bar { max-height: 60dvh; overflow-y: auto; }
 .marks-add .set-range input { flex: 0 0 auto; width: 76px; padding: 0 8px; }
 /* セットリスト：曲の行の「↑」「↓」「外す」 */
 .shelf-list .set-move { flex: 0 0 auto; min-height: 52px; min-width: 44px; padding: 0 8px; }
+.shelf-list .set-move[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .shelf-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #stage { -webkit-touch-callout: none; }
 /* 書き込み中は、紙の上の指やペンの動きで、画面を動かさない（縦スクロールでも）。「ペンだけで書く」のときは、指で動かせる */
