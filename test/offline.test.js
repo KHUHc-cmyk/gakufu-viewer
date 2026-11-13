@@ -39,5 +39,5 @@ test('見本：選び欄・保存の一覧・公開するファイルのどこ�
   assert.ok(!readText('src/app.js').includes('samples/'));
   for (const url of assets()) assert.ok(!url.includes('samples/'), `${url} が保存の一覧にある`);
   const copy = readText('.github/workflows/pages.yml').split('cp -r ')[1].split('_site/')[0];
-  assert.deepEqual(copy.trim().split(' '), ['index.html', 'pdf.html', 'sw.js', 'src', 'vendor']);
+  assert.deepEqual(copy.trim().split(' '), ['index.html', 'pdf.html', 'sw.js', 'src', 'vendor', 'icons']);
 });

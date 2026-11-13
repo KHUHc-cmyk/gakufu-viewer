@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,7 +39,7 @@ jobs:
       - name: 公開するファイルをまとめる
         run: |
           mkdir -p _site
-          cp -r index.html pdf.html sw.js src vendor _site/
+          cp -r index.html pdf.html sw.js src vendor icons _site/
           # オフライン用の保存の版を、コミットごとに変える（新しい版が出たら入れ替わる）
           sed -i "s/build-local/${GITHUB_SHA}/" _site/sw.js
           grep -q "${GITHUB_SHA}" _site/sw.js
@@ -50,7 +50,7 @@ jobs:
 
   deploy:
     needs: test-and-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
